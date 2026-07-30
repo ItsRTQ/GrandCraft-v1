@@ -1,0 +1,15 @@
+{
+	"key.category.grandcraft.main": "GrandCraft",
+	"key.grandcraft.open_menu": "Open GrandCraft Menu",
+	"screen.grandcraft.character_sheet": "Character Sheet",
+	"screen.grandcraft.choose_class": "Choose your class — this choice is permanent!",
+	"screen.grandcraft.current_class": "Class: %s",
+	"screen.grandcraft.class_announcement": "Your class has been chosen!",
+	"class.grandcraft.peasant": "Peasant",
+	"class.grandcraft.arcanist": "Arcanist",
+	"class.grandcraft.templar": "Templar",
+	"class.grandcraft.witch": "Witch",
+	"class.grandcraft.ritualist": "Ritualist",
+	"class.grandcraft.mercenary": "Mercenary",
+	"commands.grandcraft.reclass.success": "%s has been reset to Peasant and may choose a new class"
+}

@@ -1,5 +1,8 @@
 package com.hrtq.grandcraft;
 
+import com.hrtq.grandcraft.command.GrandCraftCommands;
+import com.hrtq.grandcraft.network.GrandCraftNetworking;
+import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import net.fabricmc.api.ModInitializer;
 
 import net.minecraft.resources.Identifier;
@@ -22,6 +25,10 @@ public class GrandCraft implements ModInitializer {
 		// Proceed with mild caution.
 
 		LOGGER.info("Hello Fabric world!");
+
+		GrandCraftAttachments.register();
+		GrandCraftNetworking.register();
+		GrandCraftCommands.register();
 	}
 
 	public static Identifier id(String path) {

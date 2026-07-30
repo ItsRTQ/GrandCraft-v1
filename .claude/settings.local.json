@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/c/Users/**)",
+      "Bash(python3 *)"
+    ]
+  }
+}
