@@ -40,4 +40,5 @@ replay_*.log
 *.jfr
 
 CLAUDE.md
-agent-memory
+agent-memory/
+.claude/
