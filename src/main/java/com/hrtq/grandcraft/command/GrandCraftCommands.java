@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.command;
 
+import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.player.PlayerClass;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -24,6 +25,15 @@ public final class GrandCraftCommands {
 											context.getSource().sendSuccess(() -> Component.translatable(
 													"commands.grandcraft.reclass.success", target.getDisplayName()), true);
 											return 1;
-										})))));
+										})))
+						.then(Commands.literal("config")
+								.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+								.executes(context -> {
+									// Needs a real player: the screen opens on their client, so a
+									// console or command block invocation has nowhere to send it.
+									ServerPlayer player = context.getSource().getPlayerOrException();
+									GrandCraftNetworking.sendCombatConfig(player);
+									return 1;
+								}))));
 	}
 }
