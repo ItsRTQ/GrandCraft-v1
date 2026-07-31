@@ -4,7 +4,11 @@
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
 		"ExampleMixin",
-		"LivingEntityMixin"
+		"LivingEntityHitboxAccessor",
+		"LivingEntityJumpMixin",
+		"LivingEntityMixin",
+		"MeleeAttackGoalMixin",
+		"MobMeleeRangeMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

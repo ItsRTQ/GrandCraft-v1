@@ -1,16 +1,16 @@
 package com.hrtq.grandcraft.combat;
 
+import java.util.EnumMap;
+import java.util.Map;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.monster.zombie.Zombie;
-import net.minecraft.world.entity.player.Player;
 
 /**
- * Decides which actors opt into GrandCraft combat.
+ * Resolves an entity to the live combat profile for its {@link CombatActor}.
  *
- * <p>This is the only place that names a concrete entity type. The combat engine
- * itself is generic over {@link LivingEntity}; widening coverage means adding a
- * branch here, not writing new combat code. Anything without a profile keeps
- * vanilla behaviour untouched.
+ * <p>The combat engine is generic over {@link LivingEntity}; which entities take
+ * part is decided entirely by {@link CombatActor}, so widening coverage means
+ * adding an enum entry, not writing new combat code. Anything without an actor
+ * keeps vanilla behaviour untouched.
  *
  * <p>Profiles are cached and rebuilt when {@link CombatTuning} hands back a
  * different settings object, so editing values in game takes effect on the next
@@ -18,9 +18,9 @@ import net.minecraft.world.entity.player.Player;
  * combat.
  */
 public final class CombatProfiles {
+	private static final Map<CombatActor, CombatProfile> PROFILES = new EnumMap<>(CombatActor.class);
+
 	private static CombatSettings builtFrom;
-	private static CombatProfile zombie;
-	private static CombatProfile player;
 
 	private CombatProfiles() {
 	}
@@ -29,23 +29,18 @@ public final class CombatProfiles {
 	 * @return the profile for this entity, or null when it should use vanilla combat.
 	 */
 	public static CombatProfile forEntity(LivingEntity entity) {
-		// Covers the zombie family (husk, drowned, zombie villager) since they
-		// share Zombie's melee behaviour.
-		if (entity instanceof Zombie) {
-			rebuildIfStale();
-			return zombie;
+		CombatActor actor = CombatActor.forEntity(entity);
+
+		if (actor == null) {
+			return null;
 		}
 
-		if (entity instanceof Player) {
-			rebuildIfStale();
-			return player;
-		}
-
-		return null;
+		rebuildIfStale();
+		return PROFILES.get(actor);
 	}
 
 	public static boolean isCombatant(LivingEntity entity) {
-		return forEntity(entity) != null;
+		return CombatActor.forEntity(entity) != null;
 	}
 
 	private static void rebuildIfStale() {
@@ -57,13 +52,26 @@ public final class CombatProfiles {
 		}
 
 		builtFrom = settings;
-		zombie = new CombatProfile(new AttackProfile(
-				settings.zombieStartupTicks(),
-				settings.zombieActiveTicks(),
-				settings.zombieRecoveryTicks()));
 
-		// Phase 1 does not delay player damage, so the player has no startup or
-		// meaningful active window — recovery is used purely as an attack lockout.
-		player = new CombatProfile(new AttackProfile(0, 1, settings.playerRecoveryTicks()));
+		for (CombatActor actor : CombatActor.values()) {
+			ActorSettings values = settings.forActor(actor);
+
+			// An actor whose melee does not run through MeleeAttackGoal still stores a
+			// startup value, but nothing reads it — its damage lands on vanilla
+			// timing and recovery serves purely as an attack lockout. Forcing zero
+			// here keeps the runtime honest with the config screen, which hides that
+			// slider for the same reason.
+			int startup = actor.usesMeleeGoal() ? values.startupTicks() : 0;
+			AttackProfile melee =
+					new AttackProfile(startup, CombatConstants.ACTIVE_TICKS, values.recoveryTicks());
+
+			// An actor that does not roll reads each band as a fixed value, so the
+			// same profile shape serves both without a second schema.
+			// An actor without the dodge verb keeps whatever is configured but never
+			// reaches it, exactly as with stamina — usesDodge() combines the two.
+			PROFILES.put(actor, new CombatProfile(actor, melee, StaggerProfile.from(values),
+					values.stamina(), values.dodge(),
+					values.health(), values.damage(), values.speed(), values.defence()));
+		}
 	}
 }

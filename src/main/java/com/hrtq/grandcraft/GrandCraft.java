@@ -3,6 +3,7 @@ package com.hrtq.grandcraft;
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.GrandCraftCombat;
 import com.hrtq.grandcraft.command.GrandCraftCommands;
+import com.hrtq.grandcraft.config.GameConfigFile;
 import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import net.fabricmc.api.ModInitializer;
@@ -33,8 +34,9 @@ public class GrandCraft implements ModInitializer {
 		GrandCraftCommands.register();
 		GrandCraftCombat.register();
 
-		// After registration so the combat system is in place before values land.
+		// After registration so the systems are in place before values land.
 		CombatConfigFile.load();
+		GameConfigFile.load();
 	}
 
 	public static Identifier id(String path) {

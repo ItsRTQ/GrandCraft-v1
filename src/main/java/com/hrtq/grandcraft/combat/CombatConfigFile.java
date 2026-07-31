@@ -3,12 +3,15 @@ package com.hrtq.grandcraft.combat;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.hrtq.grandcraft.GrandCraft;
 import com.mojang.serialization.JsonOps;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumMap;
+import java.util.Optional;
 import net.fabricmc.loader.api.FabricLoader;
 
 /**
@@ -43,12 +46,11 @@ public final class CombatConfigFile {
 		}
 
 		try {
-			JsonElement json = JsonParser.parseString(Files.readString(path));
-			CombatSettings settings = CombatSettings.CODEC.parse(JsonOps.INSTANCE, json).getOrThrow();
+			JsonObject root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
 
 			// Clamped by set(), so an out-of-range hand edit is corrected rather
 			// than allowed to throw later inside AttackProfile.
-			CombatTuning.set(settings);
+			CombatTuning.set(decode(root));
 			GrandCraft.LOGGER.info("Loaded combat tuning from {}", path);
 		} catch (Exception exception) {
 			GrandCraft.LOGGER.error("Could not read {}; using default combat tuning", path, exception);
@@ -61,12 +63,49 @@ public final class CombatConfigFile {
 		Path path = path();
 
 		try {
-			JsonElement json = CombatSettings.CODEC.encodeStart(JsonOps.INSTANCE, settings).getOrThrow();
+			JsonObject root = new JsonObject();
+
+			for (CombatActor actor : CombatActor.values()) {
+				root.add(actor.id(), actor.settingsCodec()
+						.encodeStart(JsonOps.INSTANCE, settings.forActor(actor)).getOrThrow());
+			}
 
 			Files.createDirectories(path.getParent());
-			Files.writeString(path, GSON.toJson(json));
+			Files.writeString(path, GSON.toJson(root));
 		} catch (IOException | RuntimeException exception) {
 			GrandCraft.LOGGER.error("Could not write combat tuning to {}", path, exception);
 		}
+	}
+
+	/**
+	 * One object per actor, keyed by {@link CombatActor#id()}.
+	 *
+	 * <p>Each actor is decoded independently against its own codec, so an actor that
+	 * is missing or unreadable falls back to that actor's defaults instead of
+	 * discarding everyone else's values with it. A file written before a mob existed
+	 * therefore keeps working, and so does one written before a field was added.
+	 */
+	private static CombatSettings decode(JsonObject root) {
+		EnumMap<CombatActor, ActorSettings> byActor = new EnumMap<>(CombatActor.class);
+
+		for (CombatActor actor : CombatActor.values()) {
+			JsonElement element = root.get(actor.id());
+
+			if (element == null) {
+				byActor.put(actor, actor.defaults());
+				continue;
+			}
+
+			Optional<ActorSettings> parsed =
+					actor.settingsCodec().parse(JsonOps.INSTANCE, element).result();
+
+			if (parsed.isEmpty()) {
+				GrandCraft.LOGGER.warn("Could not read combat tuning for {}; using its defaults", actor.id());
+			}
+
+			byActor.put(actor, parsed.orElseGet(actor::defaults));
+		}
+
+		return new CombatSettings(byActor);
 	}
 }

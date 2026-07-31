@@ -3,15 +3,19 @@ package com.hrtq.grandcraft.network;
 import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.CombatTuning;
+import com.hrtq.grandcraft.config.GameConfigFile;
+import com.hrtq.grandcraft.config.GameTuning;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.player.PlayerClass;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -26,14 +30,39 @@ public final class GrandCraftNetworking {
 				.register(ApplyCombatConfigPayload.TYPE, ApplyCombatConfigPayload.STREAM_CODEC);
 		PayloadTypeRegistry.clientboundPlay()
 				.register(OpenCombatConfigPayload.TYPE, OpenCombatConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(ApplyGameConfigPayload.TYPE, ApplyGameConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(GameConfigPayload.TYPE, GameConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(AttackLockoutPayload.TYPE, AttackLockoutPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(AttackMissPayload.TYPE, AttackMissPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(StaminaPayload.TYPE, StaminaPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(CombatPhasePayload.TYPE, CombatPhasePayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(DodgePayload.TYPE, DodgePayload.STREAM_CODEC);
 
 		registerClassSelection();
 		registerCombatConfig();
+		registerGameConfig();
+
+		// Clients need the general settings before they render anything, and they
+		// have no way to ask for them.
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
+				ServerPlayNetworking.send(handler.getPlayer(),
+						new GameConfigPayload(GameTuning.current(), false)));
 	}
 
 	/** Sends the values currently in force so the player's config screen can open. */
 	public static void sendCombatConfig(ServerPlayer player) {
 		ServerPlayNetworking.send(player, new OpenCombatConfigPayload(CombatTuning.current()));
+	}
+
+	public static void sendGameConfig(ServerPlayer player) {
+		ServerPlayNetworking.send(player, new GameConfigPayload(GameTuning.current(), true));
 	}
 
 	private static void registerClassSelection() {
@@ -86,6 +115,38 @@ public final class GrandCraftNetworking {
 			CombatConfigFile.save(CombatTuning.current());
 
 			GrandCraft.LOGGER.info("{} updated combat tuning", player.getGameProfile().name());
+			player.sendSystemMessage(Component.translatable("commands.grandcraft.config.saved"));
+		});
+	}
+
+	private static void registerGameConfig() {
+		ServerPlayNetworking.registerGlobalReceiver(ApplyGameConfigPayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+
+			// As with combat: the command's permission guards the command, not this
+			// packet, which any connected client can send at any time.
+			if (!Commands.LEVEL_GAMEMASTERS.check(player.permissions())) {
+				GrandCraft.LOGGER.warn("{} tried to change game settings without permission",
+						player.getGameProfile().name());
+				return;
+			}
+
+			GameTuning.set(payload.settings());
+			GameConfigFile.save(GameTuning.current());
+
+			// Every client renders from its own copy, so all of them have to be told,
+			// not just the admin who made the change.
+			MinecraftServer server = player.level().getServer();
+
+			if (server != null) {
+				GameConfigPayload update = new GameConfigPayload(GameTuning.current(), false);
+
+				for (ServerPlayer online : server.getPlayerList().getPlayers()) {
+					ServerPlayNetworking.send(online, update);
+				}
+			}
+
+			GrandCraft.LOGGER.info("{} updated game settings", player.getGameProfile().name());
 			player.sendSystemMessage(Component.translatable("commands.grandcraft.config.saved"));
 		});
 	}

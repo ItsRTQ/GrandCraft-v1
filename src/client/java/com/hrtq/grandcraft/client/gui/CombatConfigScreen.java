@@ -1,7 +1,16 @@
 package com.hrtq.grandcraft.client.gui;
 
+import com.hrtq.grandcraft.combat.ActorSettings;
+import com.hrtq.grandcraft.combat.CombatActor;
 import com.hrtq.grandcraft.combat.CombatSettings;
+import com.hrtq.grandcraft.combat.CombatVerb;
+import com.hrtq.grandcraft.combat.DodgeSettings;
+import com.hrtq.grandcraft.combat.StaminaSettings;
+import com.hrtq.grandcraft.combat.StatRange;
 import com.hrtq.grandcraft.network.ApplyCombatConfigPayload;
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.Set;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.StringWidget;
@@ -13,165 +22,522 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 /**
- * Admin screen for the combat tuning values, opened by {@code /grandcraft config}.
+ * Admin screen for the combat tuning values, opened by
+ * {@code /grandcraft config combat}.
  *
- * <p>Purely an editor. The server sends the current values, and Save sends the
- * edited set back; the server remains the authority on what is actually in force
- * and re-checks permissions on arrival. Nothing here changes local combat state.
+ * <p>One tab per {@link CombatActor}, built from {@code CombatActor.values()}, so a
+ * new mob gains a tab with no change here.
  *
- * <p>Slider bounds come from {@link CombatSettings}, the same constants the server
- * clamps against, so the UI cannot offer a value the server would reject.
+ * <p>Values are typed rather than dragged. Every field is a whole number: ticks,
+ * armour points, or a multiplier as whole percent, which keeps one input style
+ * across the screen and avoids a decimal separator that would follow the system
+ * locale.
+ *
+ * <p>Laid out with explicit grid cells rather than a row helper, because a tab
+ * without ranges has one value column instead of two and a row-filling helper
+ * would reflow the labels into the wrong places.
+ *
+ * <p>Purely an editor. The server sends the current values, Save sends the edited
+ * set back, and the server re-checks permissions and clamps on arrival.
  */
 public class CombatConfigScreen extends Screen {
-	private static final int SLIDER_WIDTH = 150;
-	private static final int WIDGET_HEIGHT = 20;
-	private static final int GRID_SPACING = 6;
-	private static final int SECTION_SPACING = 10;
+	private static final int LABEL_WIDTH = 78;
+	private static final int FIELD_WIDTH = 54;
+	private static final int FIELD_HEIGHT = 16;
+	private static final int TAB_WIDTH = 80;
+	private static final int BUTTON_WIDTH = 65;
+	private static final int CELL_SPACING = 4;
+	private static final int SECTION_SPACING = 8;
 
-	private final CombatSettings initialSettings;
+	/** Percent is stored as a 0-1 style multiplier but typed as whole percent. */
+	private static final int PERCENT = 100;
 
-	private TunableSlider stagger1Ticks;
-	private TunableSlider stagger1Slow;
-	private TunableSlider stagger2Ticks;
-	private TunableSlider stagger2Slow;
-	private TunableSlider staggerReset;
-	private TunableSlider staggerJump;
-	private TunableSlider knockbackResistance;
-	private TunableSlider zombieStartup;
-	private TunableSlider zombieActive;
-	private TunableSlider zombieRecovery;
-	private TunableSlider playerRecovery;
+	/** Settings that always have a tooltip; the rest read for themselves. */
+	private static final Set<String> EXPLAINED = Set.of(
+			"startup", "recovery", "stagger", "health", "defence",
+			"max_stamina", "regen", "regen_delay", "attack_cost", "sprint_cost", "jump_cost",
+			"dodge_invulnerable", "dodge_recovery", "dodge_speed", "dodge_cost");
+
+	/**
+	 * Which group of settings is on screen.
+	 *
+	 * <p>An actor's settings outgrew one readable column once stamina arrived. Split
+	 * rather than scrolled, so every view stays short enough to take in at a glance —
+	 * the same reason the value list was cut down in the first place.
+	 */
+	private enum Section {
+		COMBAT("combat"),
+		STAMINA("stamina"),
+		DODGE("dodge");
+
+		private final String id;
+
+		Section(String id) {
+			this.id = id;
+		}
+
+		Component displayName() {
+			return Component.translatable("screen.grandcraft.config.section." + this.id);
+		}
+	}
+
+	/** Every actor's values as currently edited, including tabs not on screen. */
+	private final Map<CombatActor, ActorSettings> working = new EnumMap<>(CombatActor.class);
+
+	private CombatActor activeTab = CombatActor.values()[0];
+	private Section activeSection = Section.COMBAT;
+
+	/**
+	 * Which actor the fields on screen belong to, or null before the first build.
+	 *
+	 * <p>Tracked separately from {@link #activeTab} so {@link #init()} can bank the
+	 * visible fields into the right entry: on a tab switch {@code activeTab} has
+	 * already moved on, and writing to it would copy one actor's values over
+	 * another's.
+	 */
+	private CombatActor fieldsFor;
+
+	/**
+	 * Which section the fields on screen belong to, for the same reason as
+	 * {@link #fieldsFor}: a section switch must bank into the group being left, not
+	 * the one being opened, or one group's values are written over the other's.
+	 */
+	private Section sectionFor;
+
+	private TunableField startup;
+	private TunableField recovery;
+	private TunableField stagger;
+	private TunableField healthMin;
+	private TunableField healthMax;
+	private TunableField damageMin;
+	private TunableField damageMax;
+	private TunableField speedMin;
+	private TunableField speedMax;
+	private TunableField defenceMin;
+	private TunableField defenceMax;
+
+	private TunableField maxStamina;
+	private TunableField regen;
+	private TunableField regenDelay;
+	private TunableField attackCost;
+	private TunableField sprintCost;
+	private TunableField jumpCost;
+
+	private TunableField dodgeInvulnerable;
+	private TunableField dodgeRecovery;
+	private TunableField dodgeSpeed;
+	private TunableField dodgeCost;
 
 	public CombatConfigScreen(CombatSettings settings) {
 		super(Component.translatable("screen.grandcraft.config.title"));
-		this.initialSettings = settings;
+
+		for (CombatActor actor : CombatActor.values()) {
+			this.working.put(actor, settings.forActor(actor));
+		}
 	}
 
 	@Override
 	protected void init() {
-		// init() re-runs on window resize, so seed from the sliders' present values
-		// rather than the originals; otherwise resizing would silently discard edits.
-		CombatSettings seed = this.stagger1Ticks == null ? this.initialSettings : edited();
+		// Bank whatever is on screen first. This runs on window resize as well as on
+		// a tab switch, so without it either would silently discard edits.
+		if (this.fieldsFor != null) {
+			this.working.put(this.fieldsFor, readFields());
+		}
+
+		CombatActor actor = this.activeTab;
+
+		// An actor that lacks a verb has no section for it to be looking at, which is
+		// reachable by switching tabs while that section is open.
+		if (!hasSection(actor, this.activeSection)) {
+			this.activeSection = Section.COMBAT;
+		}
+
+		ActorSettings seed = this.working.get(actor);
 
 		LinearLayout root = LinearLayout.vertical().spacing(SECTION_SPACING);
 		root.addChild(new StringWidget(this.title, this.font));
+		root.addChild(buildTabs(actor));
 
-		// Left column is the stagger reaction, right column is attack phases.
-		// RowHelper fills row by row, so children are interleaved to keep the
-		// two groups in their own columns.
-		GridLayout grid = new GridLayout().spacing(GRID_SPACING);
-		GridLayout.RowHelper rows = grid.createRowHelper(2);
+		if (actor.has(CombatVerb.STAMINA) || actor.usesDodge()) {
+			// Only worth a row of its own when there is more than one section to reach.
+			root.addChild(buildSections(actor));
+		}
 
-		this.stagger1Ticks = ticks("stagger_1_ticks",
-				CombatSettings.MAX_STAGGER_TICKS, seed.stagger1Ticks());
-		this.zombieStartup = ticks("zombie_startup",
-				CombatSettings.MAX_PHASE_TICKS, seed.zombieStartupTicks());
-		this.stagger1Slow = percent("stagger_1_slow", seed.stagger1SlowFraction());
-		// Floored at 1, matching the server clamp: an attack with no active window
-		// could never connect.
-		this.zombieActive = ticks("zombie_active", CombatSettings.MIN_ACTIVE_TICKS,
-				CombatSettings.MAX_PHASE_TICKS, seed.zombieActiveTicks());
-		this.stagger2Ticks = ticks("stagger_2_ticks",
-				CombatSettings.MAX_STAGGER_TICKS, seed.stagger2Ticks());
-		this.zombieRecovery = ticks("zombie_recovery",
-				CombatSettings.MAX_PHASE_TICKS, seed.zombieRecoveryTicks());
-		this.stagger2Slow = percent("stagger_2_slow", seed.stagger2SlowFraction());
-		this.playerRecovery = ticks("player_recovery",
-				CombatSettings.MAX_PHASE_TICKS, seed.playerRecoveryTicks());
-		this.staggerJump = fraction("stagger_jump",
-				CombatSettings.MAX_JUMP_PENALTY, seed.staggerJumpPenalty());
-		this.knockbackResistance = fraction("knockback_resistance",
-				CombatSettings.MAX_KNOCKBACK_RESISTANCE, seed.knockbackResistance());
-		this.staggerReset = ticks("stagger_reset",
-				CombatSettings.MAX_RESET_TICKS, seed.staggerResetTicks());
+		root.addChild(switch (this.activeSection) {
+			case STAMINA -> buildStaminaGrid(seed);
+			case DODGE -> buildDodgeGrid(seed);
+			case COMBAT -> buildCombatGrid(actor, seed);
+		});
 
-		// Below roughly 15 the reset window expires between ordinary consecutive
-		// swings, and the strong / weak / none sequence stops forming. Worth saying
-		// out loud, since the slider happily goes lower.
-		this.staggerReset.setTooltip(Tooltip.create(
-				Component.translatable("screen.grandcraft.config.stagger_reset.tooltip")));
-		this.staggerJump.setTooltip(Tooltip.create(
-				Component.translatable("screen.grandcraft.config.stagger_jump.tooltip")));
-		this.knockbackResistance.setTooltip(Tooltip.create(
-				Component.translatable("screen.grandcraft.config.knockback_resistance.tooltip")));
-
-		rows.addChild(this.stagger1Ticks);
-		rows.addChild(this.zombieStartup);
-		rows.addChild(this.stagger1Slow);
-		rows.addChild(this.zombieActive);
-		rows.addChild(this.stagger2Ticks);
-		rows.addChild(this.zombieRecovery);
-		rows.addChild(this.stagger2Slow);
-		rows.addChild(this.playerRecovery);
-		rows.addChild(this.staggerJump);
-		rows.addChild(this.knockbackResistance);
-		rows.addChild(this.staggerReset);
-
-		root.addChild(grid);
-
-		LinearLayout buttons = LinearLayout.horizontal().spacing(GRID_SPACING);
-		buttons.addChild(Button.builder(
-						Component.translatable("screen.grandcraft.config.save"), button -> save())
-				.width(SLIDER_WIDTH / 2).build());
-		buttons.addChild(Button.builder(
-						Component.translatable("screen.grandcraft.config.reset"), button -> resetToDefaults())
-				.width(SLIDER_WIDTH / 2).build());
-		buttons.addChild(Button.builder(
-						Component.translatable("screen.grandcraft.config.cancel"), button -> onClose())
-				.width(SLIDER_WIDTH / 2).build());
-		root.addChild(buttons);
+		root.addChild(buildButtons());
 
 		root.arrangeElements();
 		FrameLayout.centerInRectangle(root, 0, 0, this.width, this.height);
 		root.visitWidgets(this::addRenderableWidget);
+
+		this.fieldsFor = actor;
+		this.sectionFor = this.activeSection;
 	}
 
-	private TunableSlider ticks(String key, int max, int value) {
-		return ticks(key, 0, max, value);
-	}
+	private GridLayout buildCombatGrid(CombatActor actor, ActorSettings seed) {
+		boolean ranges = actor.usesRandomStats();
 
-	private TunableSlider ticks(String key, int min, int max, int value) {
-		return new TunableSlider(SLIDER_WIDTH, WIDGET_HEIGHT,
-				Component.translatable("screen.grandcraft.config." + key),
-				min, max, value, TunableSlider.Style.TICKS);
-	}
+		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
+		int row = 0;
 
-	private TunableSlider percent(String key, double value) {
-		return fraction(key, CombatSettings.MAX_SLOW_FRACTION, value);
-	}
+		if (ranges) {
+			// The two value columns need naming once; repeating "min"/"max" in every
+			// label would not fit the field width.
+			grid.addChild(new StringWidget(
+					Component.translatable("screen.grandcraft.config.min"), this.font), row, 1);
+			grid.addChild(new StringWidget(
+					Component.translatable("screen.grandcraft.config.max"), this.font), row, 2);
+			row++;
+		}
 
-	private TunableSlider fraction(String key, double max, double value) {
-		return new TunableSlider(SLIDER_WIDTH, WIDGET_HEIGHT,
-				Component.translatable("screen.grandcraft.config." + key),
-				0.0, max, value, TunableSlider.Style.PERCENT);
+		if (actor.usesMeleeGoal()) {
+			this.startup = ticks(seed.startupTicks(), ActorSettings.MAX_PHASE_TICKS);
+			row = addValue(grid, row, "startup", false, this.startup);
+		} else {
+			// Nothing to delay: this actor's damage lands on vanilla timing. Cleared
+			// rather than left stale, because readFields() uses null to mean "keep
+			// the stored value".
+			this.startup = null;
+		}
+
+		this.recovery = ticks(seed.recoveryTicks(), ActorSettings.MAX_PHASE_TICKS);
+		row = addValue(grid, row, "recovery", false, this.recovery);
+
+		this.stagger = ticks(seed.staggerTicks(), ActorSettings.MAX_STAGGER_TICKS);
+		row = addValue(grid, row, "stagger", false, this.stagger);
+
+		int maxHealth = (int) (ActorSettings.MAX_HEALTH_MULTIPLIER * PERCENT);
+		int maxDamage = (int) (ActorSettings.MAX_DAMAGE_MULTIPLIER * PERCENT);
+		int maxSpeed = (int) (ActorSettings.MAX_SPEED_MULTIPLIER * PERCENT);
+		int maxDefence = (int) ActorSettings.MAX_DEFENCE;
+
+		this.healthMin = percent(seed.health().min(), maxHealth);
+		this.healthMax = ranges ? percent(seed.health().max(), maxHealth) : null;
+		row = addStat(grid, row, "health", this.healthMin, this.healthMax);
+
+		this.damageMin = percent(seed.damage().min(), maxDamage);
+		this.damageMax = ranges ? percent(seed.damage().max(), maxDamage) : null;
+		row = addStat(grid, row, "damage", this.damageMin, this.damageMax);
+
+		this.speedMin = percent(seed.speed().min(), maxSpeed);
+		this.speedMax = ranges ? percent(seed.speed().max(), maxSpeed) : null;
+		row = addStat(grid, row, "speed", this.speedMin, this.speedMax);
+
+		this.defenceMin = points(seed.defence().min(), maxDefence);
+		this.defenceMax = ranges ? points(seed.defence().max(), maxDefence) : null;
+		addStat(grid, row, "defence", this.defenceMin, this.defenceMax);
+
+		return grid;
 	}
 
 	/**
-	 * Reloads the sliders with the shipped defaults. Deliberately does not save —
-	 * the player still has to press Save, so a mis-click is recoverable with Cancel.
+	 * The stamina group: one value column, no ranges. Costs and rates describe the
+	 * actor's behaviour rather than a stat rolled per individual, so nothing here is
+	 * a band even for actors that roll everything else.
 	 */
-	private void resetToDefaults() {
-		this.minecraft.setScreenAndShow(new CombatConfigScreen(CombatSettings.DEFAULT));
+	private GridLayout buildStaminaGrid(ActorSettings seed) {
+		StaminaSettings stamina = seed.stamina();
+
+		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
+		int row = 0;
+
+		this.maxStamina = points(stamina.maxStamina(), StaminaSettings.MAX_POOL, "stamina_points");
+		row = addValue(grid, row, "max_stamina", true, this.maxStamina);
+
+		this.regen = perSecond(stamina.regenPerSecond(), StaminaSettings.MAX_RATE);
+		row = addValue(grid, row, "regen", false, this.regen);
+
+		this.regenDelay = ticks(stamina.regenDelayTicks(), StaminaSettings.MAX_DELAY_TICKS);
+		row = addValue(grid, row, "regen_delay", false, this.regenDelay);
+
+		this.attackCost = points(stamina.attackCost(), StaminaSettings.MAX_COST, "stamina_points");
+		row = addValue(grid, row, "attack_cost", false, this.attackCost);
+
+		this.sprintCost = perSecond(stamina.sprintCostPerSecond(), StaminaSettings.MAX_RATE);
+		row = addValue(grid, row, "sprint_cost", false, this.sprintCost);
+
+		this.jumpCost = points(stamina.jumpCost(), StaminaSettings.MAX_COST, "stamina_points");
+		addValue(grid, row, "jump_cost", false, this.jumpCost);
+
+		return grid;
 	}
 
-	/** The values as the sliders currently stand. Only valid once {@link #init()} has run. */
-	private CombatSettings edited() {
-		return new CombatSettings(
-				this.stagger1Ticks.intValue(),
-				this.stagger1Slow.doubleValue(),
-				this.stagger2Ticks.intValue(),
-				this.stagger2Slow.doubleValue(),
-				this.staggerReset.intValue(),
-				this.staggerJump.doubleValue(),
-				this.knockbackResistance.doubleValue(),
-				this.zombieStartup.intValue(),
-				this.zombieActive.intValue(),
-				this.zombieRecovery.intValue(),
-				this.playerRecovery.intValue());
+	/**
+	 * The dodge group: one value column, no ranges, for the same reason as stamina —
+	 * these describe how the verb behaves rather than a stat rolled per individual.
+	 */
+	private GridLayout buildDodgeGrid(ActorSettings seed) {
+		DodgeSettings dodge = seed.dodge();
+
+		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
+		int row = 0;
+
+		this.dodgeInvulnerable = ticks(dodge.invulnerableTicks(), DodgeSettings.MAX_TICKS);
+		row = addValue(grid, row, "dodge_invulnerable", false, this.dodgeInvulnerable);
+
+		this.dodgeRecovery = ticks(dodge.recoveryTicks(), DodgeSettings.MAX_TICKS);
+		row = addValue(grid, row, "dodge_recovery", false, this.dodgeRecovery);
+
+		this.dodgeSpeed = unit(dodge.speed(), DodgeSettings.MAX_SPEED, "hundredths_per_tick");
+		row = addValue(grid, row, "dodge_speed", false, this.dodgeSpeed);
+
+		this.dodgeCost = points(dodge.cost(), DodgeSettings.MAX_COST, "stamina_points");
+		addValue(grid, row, "dodge_cost", false, this.dodgeCost);
+
+		return grid;
+	}
+
+	/** Whether this actor has the verb a section exists to configure. */
+	private static boolean hasSection(CombatActor actor, Section section) {
+		return switch (section) {
+			case COMBAT -> true;
+			case STAMINA -> actor.has(CombatVerb.STAMINA);
+			case DODGE -> actor.usesDodge();
+		};
+	}
+
+	/** A single value in the label column and the first value column. */
+	private int addValue(GridLayout grid, int row, String key, boolean base, TunableField field) {
+		grid.addChild(label(key, base), row, 0);
+		grid.addChild(field, row, 1);
+		return row + 1;
+	}
+
+	/** A stat, which has a second value column only when this actor rolls a range. */
+	private int addStat(GridLayout grid, int row, String key, TunableField min, TunableField max) {
+		grid.addChild(label(key, true), row, 0);
+		grid.addChild(min, row, 1);
+
+		if (max != null) {
+			grid.addChild(max, row, 2);
+		}
+
+		return row + 1;
+	}
+
+	private StringWidget label(String key, boolean base) {
+		Component name = Component.translatable("screen.grandcraft.config." + key);
+
+		// Every stat is a base value, for mobs as much as for the player: what is set
+		// here is the starting point that later features are meant to add to rather
+		// than replace. For a mob that starting point is itself rolled from the band,
+		// so "Base Health / Min / Max" reads as the range the base is drawn from.
+		Component text = base
+				? Component.translatable("screen.grandcraft.config.base", name)
+				: name;
+
+		StringWidget widget = new StringWidget(LABEL_WIDTH, FIELD_HEIGHT, text, this.font);
+
+		// Only some settings need explaining; the rest read for themselves.
+		if (EXPLAINED.contains(key)) {
+			widget.setTooltip(Tooltip.create(
+					Component.translatable("screen.grandcraft.config." + key + ".tooltip")));
+		}
+
+		return widget;
+	}
+
+	private TunableField ticks(int value, int max) {
+		return unit(value, max, "ticks");
+	}
+
+	private TunableField perSecond(int value, int max) {
+		return unit(value, max, "per_second");
+	}
+
+	private TunableField points(double value, int max) {
+		return points(value, max, "points");
+	}
+
+	private TunableField points(double value, int max, String unitKey) {
+		return unit((int) Math.round(value), max, unitKey);
+	}
+
+	/** The unit key names the field for narration; every field is a whole number. */
+	private TunableField unit(int value, int max, String unitKey) {
+		return new TunableField(this.font, FIELD_WIDTH, FIELD_HEIGHT,
+				Component.translatable("screen.grandcraft.config." + unitKey), 0, max, value);
+	}
+
+	private TunableField percent(double multiplier, int max) {
+		return new TunableField(this.font, FIELD_WIDTH, FIELD_HEIGHT,
+				Component.translatable("screen.grandcraft.config.percent"),
+				0, max, (int) Math.round(multiplier * PERCENT));
+	}
+
+	private LinearLayout buildTabs(CombatActor open) {
+		LinearLayout tabs = LinearLayout.horizontal().spacing(CELL_SPACING);
+
+		for (CombatActor tab : CombatActor.values()) {
+			Button button = Button.builder(tab.displayName(), ignored -> selectTab(tab))
+					.width(TAB_WIDTH).build();
+
+			// The open tab is shown as an unusable button, which greys it out and
+			// makes "you are here" obvious without a custom widget.
+			button.active = tab != open;
+			tabs.addChild(button);
+		}
+
+		return tabs;
+	}
+
+	/**
+	 * The section row, styled exactly like the actor tabs above it — an unusable
+	 * button is how this screen already says "you are here".
+	 */
+	private LinearLayout buildSections(CombatActor actor) {
+		LinearLayout sections = LinearLayout.horizontal().spacing(CELL_SPACING);
+
+		for (Section section : Section.values()) {
+			// A section for a verb this actor does not have would only ever show values
+			// that nothing reads.
+			if (!hasSection(actor, section)) {
+				continue;
+			}
+
+			Button button = Button.builder(section.displayName(), ignored -> selectSection(section))
+					.width(TAB_WIDTH).build();
+			button.active = section != this.activeSection;
+			sections.addChild(button);
+		}
+
+		return sections;
+	}
+
+	private void selectSection(Section section) {
+		if (section == this.activeSection) {
+			return;
+		}
+
+		// init() banks the outgoing section's fields via sectionFor, so switching here
+		// is just a rebuild — the same contract as a tab switch.
+		this.activeSection = section;
+		rebuildWidgets();
+	}
+
+	private LinearLayout buildButtons() {
+		LinearLayout buttons = LinearLayout.horizontal().spacing(CELL_SPACING);
+
+		buttons.addChild(Button.builder(
+						Component.translatable("screen.grandcraft.config.save"), button -> save())
+				.width(BUTTON_WIDTH).build());
+
+		Button resetTab = Button.builder(
+						Component.translatable("screen.grandcraft.config.reset"), button -> resetActiveTab())
+				.width(BUTTON_WIDTH).build();
+		resetTab.setTooltip(Tooltip.create(
+				Component.translatable("screen.grandcraft.config.reset.tooltip")));
+		buttons.addChild(resetTab);
+
+		buttons.addChild(Button.builder(
+						Component.translatable("screen.grandcraft.config.cancel"), button -> onClose())
+				.width(BUTTON_WIDTH).build());
+
+		return buttons;
+	}
+
+	private void selectTab(CombatActor tab) {
+		if (tab == this.activeTab) {
+			return;
+		}
+
+		// init() banks the outgoing tab's fields via fieldsFor, so switching here is
+		// just a rebuild.
+		this.activeTab = tab;
+		rebuildWidgets();
+	}
+
+	/**
+	 * Reloads the visible tab with that actor's shipped defaults. Deliberately does
+	 * not save, and deliberately leaves other tabs alone — the player still has to
+	 * press Save, so a mis-click is recoverable with Cancel.
+	 */
+	private void resetActiveTab() {
+		this.working.put(this.activeTab, this.activeTab.defaults());
+
+		// Drop the banked values so init() does not immediately overwrite the
+		// defaults with the fields it is about to replace.
+		this.fieldsFor = null;
+		rebuildWidgets();
+	}
+
+	/**
+	 * The visible tab's values as the fields currently stand.
+	 *
+	 * <p>Only the open section is read from the widgets; the other is carried through
+	 * from what is stored. Rebuilding it from defaults instead would let opening one
+	 * section and pressing Save quietly discard the other.
+	 */
+	private ActorSettings readFields() {
+		ActorSettings stored = this.working.get(this.fieldsFor);
+
+		if (this.sectionFor == Section.STAMINA) {
+			return new ActorSettings(
+					stored.startupTicks(),
+					stored.recoveryTicks(),
+					stored.staggerTicks(),
+					stored.health(),
+					stored.damage(),
+					stored.speed(),
+					stored.defence(),
+					new StaminaSettings(
+							this.maxStamina.intValue(),
+							this.regen.intValue(),
+							this.regenDelay.intValue(),
+							this.attackCost.intValue(),
+							this.sprintCost.intValue(),
+							this.jumpCost.intValue()),
+					stored.dodge());
+		}
+
+		if (this.sectionFor == Section.DODGE) {
+			return new ActorSettings(
+					stored.startupTicks(),
+					stored.recoveryTicks(),
+					stored.staggerTicks(),
+					stored.health(),
+					stored.damage(),
+					stored.speed(),
+					stored.defence(),
+					stored.stamina(),
+					new DodgeSettings(
+							this.dodgeInvulnerable.intValue(),
+							this.dodgeRecovery.intValue(),
+							this.dodgeSpeed.intValue(),
+							this.dodgeCost.intValue()));
+		}
+
+		return new ActorSettings(
+				this.startup == null ? stored.startupTicks() : this.startup.intValue(),
+				this.recovery.intValue(),
+				this.stagger.intValue(),
+				percentBand(this.healthMin, this.healthMax),
+				percentBand(this.damageMin, this.damageMax),
+				percentBand(this.speedMin, this.speedMax),
+				pointsBand(this.defenceMin, this.defenceMax),
+				stored.stamina(),
+				stored.dodge());
+	}
+
+	/** A fixed stat has no max field, so its band collapses onto the single value. */
+	private static StatRange percentBand(TunableField min, TunableField max) {
+		double low = min.intValue() / (double) PERCENT;
+		return max == null ? StatRange.of(low) : new StatRange(low, max.intValue() / (double) PERCENT);
+	}
+
+	private static StatRange pointsBand(TunableField min, TunableField max) {
+		double low = min.intValue();
+		return max == null ? StatRange.of(low) : new StatRange(low, max.intValue());
 	}
 
 	private void save() {
-		ClientPlayNetworking.send(new ApplyCombatConfigPayload(edited()));
+		this.working.put(this.activeTab, readFields());
+		ClientPlayNetworking.send(new ApplyCombatConfigPayload(new CombatSettings(this.working)));
 		onClose();
 	}
 }

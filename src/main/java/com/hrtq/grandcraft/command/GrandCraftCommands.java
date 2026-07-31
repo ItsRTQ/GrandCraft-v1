@@ -26,14 +26,25 @@ public final class GrandCraftCommands {
 													"commands.grandcraft.reclass.success", target.getDisplayName()), true);
 											return 1;
 										})))
+						// A category rather than a command, so later config screens are
+						// siblings of "combat" instead of needing their own top-level verb.
 						.then(Commands.literal("config")
 								.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
-								.executes(context -> {
-									// Needs a real player: the screen opens on their client, so a
-									// console or command block invocation has nowhere to send it.
-									ServerPlayer player = context.getSource().getPlayerOrException();
-									GrandCraftNetworking.sendCombatConfig(player);
-									return 1;
-								}))));
+								// "game" first: it holds the settings that apply mod-wide, of
+								// which combat is one area among several to come.
+								.then(Commands.literal("game")
+										.executes(context -> {
+											ServerPlayer player = context.getSource().getPlayerOrException();
+											GrandCraftNetworking.sendGameConfig(player);
+											return 1;
+										}))
+								.then(Commands.literal("combat")
+										.executes(context -> {
+											// Needs a real player: the screen opens on their client, so a
+											// console or command block invocation has nowhere to send it.
+											ServerPlayer player = context.getSource().getPlayerOrException();
+											GrandCraftNetworking.sendCombatConfig(player);
+											return 1;
+										})))));
 	}
 }

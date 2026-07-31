@@ -1,8 +1,14 @@
 package com.hrtq.grandcraft.client;
 
 import com.hrtq.grandcraft.client.gui.CombatConfigScreen;
+import com.hrtq.grandcraft.client.gui.GameConfigScreen;
+import com.hrtq.grandcraft.network.AttackLockoutPayload;
+import com.hrtq.grandcraft.network.CombatPhasePayload;
+import com.hrtq.grandcraft.network.GameConfigPayload;
 import com.hrtq.grandcraft.network.OpenCombatConfigPayload;
+import com.hrtq.grandcraft.network.StaminaPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.util.Util;
 
 public final class GrandCraftClientNetworking {
 	private GrandCraftClientNetworking() {
@@ -13,5 +19,24 @@ public final class GrandCraftClientNetworking {
 				// Handlers already run on the client thread, so the screen can be
 				// opened directly.
 				context.client().setScreenAndShow(new CombatConfigScreen(payload.settings())));
+
+		ClientPlayNetworking.registerGlobalReceiver(AttackLockoutPayload.TYPE, (payload, context) ->
+				ClientAttackLockout.begin(payload.ticks(), Util.getMillis()));
+
+		ClientPlayNetworking.registerGlobalReceiver(StaminaPayload.TYPE, (payload, context) ->
+				ClientStamina.accept(payload, Util.getMillis()));
+
+		ClientPlayNetworking.registerGlobalReceiver(CombatPhasePayload.TYPE, (payload, context) ->
+				ClientCombatPhases.accept(payload, Util.getMillis()));
+
+		ClientPlayNetworking.registerGlobalReceiver(GameConfigPayload.TYPE, (payload, context) -> {
+			// One packet serves both jobs: every client is told the new values so it
+			// can render from them, and only the admin who asked gets the screen.
+			ClientGameSettings.set(payload.settings());
+
+			if (payload.openScreen()) {
+				context.client().setScreenAndShow(new GameConfigScreen(payload.settings()));
+			}
+		});
 	}
 }

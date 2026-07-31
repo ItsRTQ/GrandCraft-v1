@@ -3,7 +3,17 @@
 	"package": "com.hrtq.grandcraft.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"ExampleClientMixin"
+		"AbstractZombieModelMixin",
+		"ClientJumpMixin",
+		"EntityRendererMixin",
+		"ExampleClientMixin",
+		"GameRendererDodgeCameraMixin",
+		"LivingEntityRenderStateMixin",
+		"LivingEntityRendererDodgeMixin",
+		"LivingEntityRendererExtractMixin",
+		"LocalPlayerSprintMixin",
+		"MinecraftAttackMissMixin",
+		"PlayerAttackStrengthMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
