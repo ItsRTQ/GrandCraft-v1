@@ -55,5 +55,21 @@ public enum CombatVerb {
 	 * whole-body rotation on the shared rig. A mob gains it by gaining the verb and
 	 * something to decide <em>when</em> — an AI goal, which is the missing half.
 	 */
-	DODGE
+	DODGE,
+
+	/**
+	 * This actor can guard: a held stance that absorbs what comes at its front, paid
+	 * for out of the stamina pool in proportion to the damage stopped.
+	 *
+	 * <p>The other answer to a telegraph, and deliberately the opposite shape to
+	 * {@link #DODGE}. A dodge protects instantly and leaves a vulnerable tail; a guard
+	 * is vulnerable while it comes up and safe once it is there. That asymmetry is the
+	 * decision — commit early and cheaply, or commit late and expensively — and it is
+	 * why two defensive verbs are worth more than one good one.
+	 *
+	 * <p>Like {@link #DODGE}, only the player has it today and nothing in the
+	 * implementation is player-specific. A mob gains it by gaining the verb and an AI
+	 * goal to decide when to raise it.
+	 */
+	BLOCK
 }

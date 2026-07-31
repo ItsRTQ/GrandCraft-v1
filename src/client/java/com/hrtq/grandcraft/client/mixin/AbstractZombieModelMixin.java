@@ -69,6 +69,7 @@ public abstract class AbstractZombieModelMixin {
 		HumanoidModel<?> model = (HumanoidModel<?>) (Object) this;
 
 		HumanoidCombatPose.apply(model.head, model.rightArm, model.leftArm,
-				phase, ((CombatPoseState) state).grandcraft$phaseProgress());
+				phase, ((CombatPoseState) state).grandcraft$phaseProgress(),
+				HumanoidCombatPose.guardArmOf(state));
 	}
 }

@@ -7,14 +7,19 @@ import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -41,6 +46,17 @@ import net.minecraft.world.phys.Vec3;
  * </ul>
  *
  * In the latter two cases the slowdown and lockout still apply.
+ *
+ * <h2>The guard, and why it is held on a lease</h2>
+ * Every other phase knows its own length when it begins, and the whole animation
+ * pipeline is built on that. A guard does not: it lasts until the actor lets go.
+ * Rather than teach the payload, the client store and the pose about an indefinite
+ * phase, {@link CombatState#GUARDING} is granted in fixed leases of
+ * {@link CombatConstants#GUARD_LEASE_TICKS} that renew themselves in
+ * {@link #advanceState} while {@link #guardHeld} is still set. The client re-asserts
+ * the hold periodically and {@link #guardHoldTicks} forgets it if that stops
+ * arriving, so a release packet that never lands puts the guard down by itself
+ * instead of leaving it standing forever.
  */
 public final class CombatController {
 	private static final Identifier STAGGER_SPEED_ID = GrandCraft.id("stagger_speed");
@@ -50,6 +66,7 @@ public final class CombatController {
 	private static final Identifier DAMAGE_ID = GrandCraft.id("combat_damage");
 	private static final Identifier HEALTH_ID = GrandCraft.id("combat_health");
 	private static final Identifier DEFENCE_ID = GrandCraft.id("combat_defence");
+	private static final Identifier GUARD_SPEED_ID = GrandCraft.id("guard_speed");
 
 	private final StaggerTracker stagger = new StaggerTracker();
 
@@ -85,6 +102,16 @@ public final class CombatController {
 
 	/** Slowdown and attack lockout, independent of {@link #state}. */
 	private int staggerTicks;
+
+	/** Whether the actor is still asking to keep its guard up. */
+	private boolean guardHeld;
+
+	/**
+	 * Ticks left before an un-renewed hold is forgotten. The client re-asserts every
+	 * {@link CombatConstants#GUARD_KEEPALIVE_TICKS}, so this only ever runs out when
+	 * the client has stopped talking — a disconnect, or a release that was lost.
+	 */
+	private int guardHoldTicks;
 
 	/** Ticks before another routine stamina packet may be sent. */
 	private int staminaSyncDelay;
@@ -123,6 +150,7 @@ public final class CombatController {
 			// controller that somehow outlived its profile cannot leave a slowdown
 			// applied forever.
 			clearStaggerModifiers(entity);
+			remove(entity, Attributes.MOVEMENT_SPEED, GUARD_SPEED_ID);
 			return;
 		}
 
@@ -134,7 +162,23 @@ public final class CombatController {
 		if (profile.usesStamina()) {
 			this.stamina.tick(profile.stamina());
 			drainSprint(entity, profile);
+			drainGuard(entity, profile);
 			syncStamina(entity, profile);
+		}
+
+		// Runs whether or not the actor pays stamina: this is the dead man's switch on
+		// the hold, not a cost. Counted down before the state timer so a hold that
+		// lapsed this tick is already forgotten when the lease asks about it.
+		if (this.guardHeld && --this.guardHoldTicks <= 0) {
+			this.guardHeld = false;
+		}
+
+		// A guard needs something to guard with, and what it has can leave mid-block —
+		// broken by the wear an absorbed hit charges, or simply swapped out of the
+		// hand. Re-checked every tick rather than only at the raise for that reason.
+		if ((this.state == CombatState.GUARD_RAISE || this.state == CombatState.GUARDING)
+				&& !hasGuardImplement(entity)) {
+			releaseGuard(entity, profile);
 		}
 
 		if (this.staggerTicks > 0) {
@@ -204,7 +248,15 @@ public final class CombatController {
 	 * indicator would state a countdown that is not real.
 	 */
 	public int attackLockoutTicks() {
-		int phase = this.state == CombatState.NEUTRAL ? 0 : this.stateTicks;
+		// GUARDING is excluded alongside NEUTRAL. Its remaining ticks say when the
+		// current lease runs out, not when the actor is free, so reporting them would
+		// make the indicator saw back and forth for as long as the guard is held. A
+		// guard has no countdown to show for the same reason stamina does not: it ends
+		// when the player lets go.
+		int phase = this.state == CombatState.NEUTRAL || this.state == CombatState.GUARDING
+				? 0
+				: this.stateTicks;
+
 		return Math.max(this.staggerTicks, phase);
 	}
 
@@ -239,16 +291,24 @@ public final class CombatController {
 	/**
 	 * Whether a dodge may start right now.
 	 *
-	 * <p>Strictly from neutral, so a dodge cannot be used to cancel the recovery of
-	 * an attack or another dodge. That is the point of committing: the cost of a
-	 * swing is that you are still in it.
+	 * <p>From neutral, so a dodge cannot be used to cancel the recovery of an attack
+	 * or another dodge. That is the point of committing: the cost of a swing is that
+	 * you are still in it.
+	 *
+	 * <p>A raised guard is the one exception. Rolling out from behind it is allowed
+	 * because the alternative makes the guard a trap rather than an option — having
+	 * to drop it and sit through the tail before a dodge could even begin would mean
+	 * that committing to defence commits you to <em>that</em> defence. Being able to
+	 * switch between the two verbs under pressure is most of what makes holding one
+	 * of them interesting.
 	 */
 	public boolean canStartDodge(LivingEntity entity, CombatProfile profile) {
 		if (!profile.usesDodge()) {
 			return false;
 		}
 
-		if (this.state != CombatState.NEUTRAL || this.staggerTicks > 0) {
+		if ((this.state != CombatState.NEUTRAL && this.state != CombatState.GUARDING)
+				|| this.staggerTicks > 0) {
 			return false;
 		}
 
@@ -279,6 +339,11 @@ public final class CombatController {
 			return false;
 		}
 
+		// Rolling out of a guard skips its tail entirely. Charging the drop before the
+		// roll could start would defeat the point of allowing it at all, and the roll's
+		// own recovery is already the price of the exchange.
+		dropGuardHold();
+
 		spendDodgeCost(profile);
 		launch(entity, profile, direction);
 		enter(entity, CombatState.DODGE_ACTIVE, profile.dodge().invulnerableTicks());
@@ -293,6 +358,354 @@ public final class CombatController {
 	 */
 	public boolean isDodgeInvulnerable() {
 		return this.state == CombatState.DODGE_ACTIVE;
+	}
+
+	/**
+	 * Whether a guard may start right now.
+	 *
+	 * <p>Nothing is charged to raise one, so there is no stamina cost to clear — but
+	 * an exhausted actor is refused anyway. A guard it could not hold for a single
+	 * tick and that would shatter on the first hit is worse than no guard at all: it
+	 * would read as the verb being broken rather than as the pool being empty.
+	 */
+	public boolean canStartGuard(LivingEntity entity, CombatProfile profile) {
+		if (!profile.usesBlock() || !hasGuardImplement(entity)) {
+			return false;
+		}
+
+		if (this.state != CombatState.NEUTRAL || this.staggerTicks > 0) {
+			return false;
+		}
+
+		return !profile.usesStamina() || !this.stamina.exhausted();
+	}
+
+	/**
+	 * Whether the actor is carrying something it could guard with: an off-hand shield,
+	 * or a weapon in its main hand.
+	 *
+	 * <p>Checked here rather than only on the client, because the client is the one
+	 * asking. Neither test names an item type: a shield is whatever carries vanilla's
+	 * own blocking component, and a weapon is whatever a datapack has put in
+	 * {@link GrandCraftTags#GUARD_IMPLEMENTS}.
+	 */
+	public static boolean hasGuardImplement(LivingEntity entity) {
+		return guardHand(entity) != null;
+	}
+
+	/**
+	 * Which hand is doing the blocking, or null when nothing can.
+	 *
+	 * <p>A single answer that everything else derives from — whether a guard may start,
+	 * which item wears out, and whether the shield discount applies — so those three
+	 * can never disagree about what is being blocked with.
+	 *
+	 * <p>A shield wins over a weapon wherever it is, and the off-hand wins when there
+	 * are two, which is the usual way of carrying one. Checking the main hand for a
+	 * shield matters more than it looks: a shield held in the main hand is not in the
+	 * weapon tag and has no business being excluded, and leaving it out meant a player
+	 * holding one had no guard at all.
+	 */
+	public static InteractionHand guardHand(LivingEntity entity) {
+		return guardHand(entity.getMainHandItem(), entity.getOffhandItem());
+	}
+
+	/**
+	 * The same choice made from two stacks alone.
+	 *
+	 * <p>Split out so the renderer can reach the identical answer: it draws other
+	 * players from a render state rather than an entity, and the arm it poses has to
+	 * be the arm the server is actually blocking with. One rule, two callers, no way
+	 * for the picture and the mechanics to disagree.
+	 */
+	public static InteractionHand guardHand(ItemStack mainHand, ItemStack offHand) {
+		if (offHand.has(DataComponents.BLOCKS_ATTACKS)) {
+			return InteractionHand.OFF_HAND;
+		}
+
+		if (mainHand.has(DataComponents.BLOCKS_ATTACKS)
+				|| mainHand.is(GrandCraftTags.GUARD_IMPLEMENTS)) {
+			return InteractionHand.MAIN_HAND;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Starts raising the guard.
+	 *
+	 * @return false when the guard was refused, in which case nothing changed
+	 */
+	public boolean beginGuard(LivingEntity entity, CombatProfile profile) {
+		if (!canStartGuard(entity, profile)) {
+			return false;
+		}
+
+		this.guardHeld = true;
+		this.guardHoldTicks = CombatConstants.GUARD_HOLD_TIMEOUT_TICKS;
+		enter(entity, CombatState.GUARD_RAISE, profile.block().raiseTicks());
+		return true;
+	}
+
+	/**
+	 * Renews the hold, on hearing from a client that is still holding its key.
+	 *
+	 * <p>Only meaningful while the guard is coming up or up: once the tail has begun
+	 * the actor has already let go, and a late keepalive must not pull it back.
+	 */
+	public void refreshGuardHold() {
+		if (this.state == CombatState.GUARD_RAISE || this.state == CombatState.GUARDING) {
+			this.guardHoldTicks = CombatConstants.GUARD_HOLD_TIMEOUT_TICKS;
+		}
+	}
+
+	/**
+	 * The actor has let go. Drops into the tail immediately rather than waiting for
+	 * the current lease to expire, so releasing feels like releasing.
+	 */
+	public void releaseGuard(LivingEntity entity, CombatProfile profile) {
+		dropGuardHold();
+
+		if (this.state == CombatState.GUARD_RAISE || this.state == CombatState.GUARDING) {
+			enter(entity, CombatState.GUARD_RECOVERY, profile.block().recoveryTicks());
+		}
+	}
+
+	/** Whether the guard is up and absorbing. The raise and the tail are not. */
+	public boolean isGuarding() {
+		return this.state == CombatState.GUARDING;
+	}
+
+	/**
+	 * Whether an incoming hit is one the guard covers.
+	 *
+	 * <p>Reproduces vanilla's own shield arithmetic rather than inventing a second
+	 * one: the actor's head yaw flattened to horizontal, against the direction the
+	 * damage came from, compared to a half-angle. Pitch is deliberately not part of
+	 * it, exactly as in vanilla — looking at your feet does not drop your guard.
+	 *
+	 * <p>Damage with no position at all is never covered. That is vanilla's answer
+	 * too, and it is the right one: a guard is a direction, and something with no
+	 * direction cannot be facing it.
+	 *
+	 * <p><strong>Anything inside the actor's own space is always covered</strong>, and
+	 * this is a deliberate departure from vanilla. Vanilla compares raw positions no
+	 * matter how close they are, which is fine for a shield but not for a mob that
+	 * closes to touching distance and stays there: once the hitboxes overlap, the
+	 * horizontal offset is a fraction of a block and its <em>direction</em> is
+	 * whatever sub-block jitter happens to be that tick. The angle it produces is
+	 * then effectively random, so a guard held straight at an attacker standing on
+	 * top of you would block roughly at a coin flip. Below touching distance there is
+	 * no meaningful "behind", so the arc test is skipped rather than answered badly.
+	 */
+	public static boolean coversDirection(LivingEntity entity, CombatProfile profile,
+			DamageSource source) {
+		Vec3 sourcePos = source.getSourcePosition();
+
+		if (sourcePos == null) {
+			return false;
+		}
+
+		Vec3 offset = sourcePos.subtract(entity.position());
+		double distanceSqr = offset.x * offset.x + offset.z * offset.z;
+		double touching = touchingDistance(entity, source.getDirectEntity());
+
+		if (distanceSqr <= touching * touching) {
+			return true;
+		}
+
+		Vec3 flattened = new Vec3(offset.x, 0.0, offset.z);
+		Vec3 facing = entity.calculateViewVector(0.0F, entity.getYHeadRot());
+		double angle = Math.acos(Math.clamp(flattened.normalize().dot(facing), -1.0, 1.0));
+
+		return angle <= profile.block().arcRadians();
+	}
+
+	/**
+	 * How close the two have to be before their hitboxes are in contact, which is the
+	 * point past which direction stops meaning anything.
+	 *
+	 * <p>Derived from the widths rather than fixed, so a wide attacker is judged to be
+	 * touching from further out — which is exactly what its hitbox does.
+	 */
+	private static double touchingDistance(LivingEntity entity, Entity attacker) {
+		double attackerWidth = attacker == null ? 0.0 : attacker.getBbWidth();
+
+		return (entity.getBbWidth() + attackerWidth) / 2.0;
+	}
+
+	/**
+	 * Charges for one hit the guard stopped, and breaks the guard if that emptied the
+	 * pool.
+	 *
+	 * <p>Spent with {@link StaminaPool#drain} rather than {@code spend} deliberately:
+	 * drain never refuses and takes whatever is left, which is exactly the rule that
+	 * the hit which empties the pool is still absorbed. The punishment for
+	 * misjudging the budget is the break that follows, not damage leaking through a
+	 * guard that was up.
+	 */
+	public void absorbBlockedHit(LivingEntity entity, CombatProfile profile, float amount) {
+		// Before the stamina gate, because an actor that pays no stamina still wears
+		// out what it is blocking with.
+		wearGuardImplement(entity, amount);
+
+		if (!profile.usesStamina()) {
+			return;
+		}
+
+		float cost = amount * profile.block().costPerDamageScale();
+
+		if (guardsWithShield(entity)) {
+			cost *= profile.block().shieldCostScale();
+		}
+
+		this.stamina.drain(profile.stamina(), cost);
+		reportStaminaSoon();
+
+		if (this.stamina.exhausted()) {
+			breakGuard(entity, profile);
+		}
+	}
+
+	/**
+	 * Whether an off-hand shield is doing the blocking rather than a held weapon.
+	 *
+	 * <p>Read at the moment it matters rather than latched when the guard went up, so
+	 * swapping the off-hand mid-guard needs no bookkeeping and there is no stored
+	 * answer that could disagree with the item actually there. The client is never
+	 * asked — it only ever reports that a key is held.
+	 *
+	 * <p>Keyed off the component vanilla itself uses to mark something as a shield, so
+	 * modded shields work with no item type named here — and asked of whichever hand
+	 * {@link #guardHand} picked, so a shield counts as one in either.
+	 */
+	public static boolean guardsWithShield(LivingEntity entity) {
+		InteractionHand hand = guardHand(entity);
+
+		return hand != null && entity.getItemInHand(hand).has(DataComponents.BLOCKS_ATTACKS);
+	}
+
+	/**
+	 * Wears down whatever took the hit.
+	 *
+	 * <p>Removing vanilla's blocking took its durability cost with it — that lived in
+	 * {@code BlocksAttacks.hurtBlockingItem}, which our {@code applyItemBlocking} hook
+	 * now skips — so the guard has to charge it itself, or a shield would block for
+	 * free forever. The formula is vanilla's own, so a shield lasts about as long as
+	 * it used to.
+	 *
+	 * <p>Falls on the hand that is actually guarding: the off-hand when a shield is
+	 * doing the work, the main hand when it is a weapon.
+	 */
+	private static void wearGuardImplement(LivingEntity entity, float amount) {
+		if (amount <= 0.0F) {
+			return;
+		}
+
+		InteractionHand hand = guardHand(entity);
+
+		if (hand == null) {
+			return;
+		}
+
+		int wear = (int) (CombatConstants.GUARD_WEAR_BASE + CombatConstants.GUARD_WEAR_FACTOR * amount);
+
+		if (wear > 0) {
+			entity.getItemInHand(hand).hurtAndBreak(wear, entity, hand);
+		}
+	}
+
+	/**
+	 * Shatters the guard, throwing the actor into a stagger with it down.
+	 *
+	 * <p>Deliberately does <em>not</em> go through {@link #applyStagger}. That routes
+	 * through the stagger tracker, which suppresses the third consecutive reaction so
+	 * that pressure cannot stunlock — correct for ordinary hits, and wrong here. A
+	 * guard break is a mistake the actor made with its own resource, and it has to be
+	 * punished every single time or the resource stops mattering.
+	 */
+	private void breakGuard(LivingEntity entity, CombatProfile profile) {
+		dropGuardHold();
+
+		int ticks = profile.block().breakTicks();
+
+		// Modifiers only when there is a timer to clear them: they are removed on the
+		// tick the stagger counter reaches zero, which never happens if it never ran.
+		if (ticks > 0) {
+			this.staggerTicks = ticks;
+			applyStaggerModifiers(entity,
+					-CombatConstants.STAGGER_SLOW, -CombatConstants.STAGGER_JUMP_PENALTY);
+		}
+
+		enter(entity, CombatState.STAGGERED, ticks);
+	}
+
+	/**
+	 * Drains the cost of standing behind the guard, and breaks it once the pool runs
+	 * out.
+	 *
+	 * <p>Continuous like the sprint drain, and through {@link StaminaPool#drain} for
+	 * the same reason: it pushes the regen delay back every tick it runs, so
+	 * <strong>nothing recovers while a guard is up</strong>. That is the rule, not a
+	 * side effect — a guard is a commitment with a finite budget, and getting the pool
+	 * back means dropping it and making space rather than waiting behind it. It also
+	 * means the hold cost is doing two jobs, and setting it to zero would quietly
+	 * restore regen behind the guard rather than merely making the hold free.
+	 */
+	private void drainGuard(LivingEntity entity, CombatProfile profile) {
+		if (this.state != CombatState.GUARDING) {
+			return;
+		}
+
+		float cost = profile.block().holdCostPerTick();
+
+		if (cost <= 0.0F) {
+			return;
+		}
+
+		this.stamina.drain(profile.stamina(), cost);
+
+		if (this.stamina.exhausted()) {
+			breakGuard(entity, profile);
+		}
+	}
+
+	/** Forgets the hold without touching the state machine. */
+	private void dropGuardHold() {
+		this.guardHeld = false;
+		this.guardHoldTicks = 0;
+	}
+
+	/**
+	 * Read at the moment the guard is dropped rather than stored when it began, so an
+	 * admin lengthening the tail mid-fight takes effect on the next guard rather than
+	 * the one after. Falls back to no tail if the profile vanished.
+	 */
+	private static int guardRecoveryTicks(LivingEntity entity) {
+		CombatProfile profile = CombatProfiles.forEntity(entity);
+
+		return profile == null ? 0 : profile.block().recoveryTicks();
+	}
+
+	/**
+	 * Keeps the guard's movement penalty matching the current state.
+	 *
+	 * <p>Called from both terminal points of a transition — {@link #enter} for a phase
+	 * that holds, {@link #returnToNeutral} for the end of one — so every route out of
+	 * a guard clears it: releasing, breaking, being staggered, or rolling out.
+	 */
+	private void syncGuardSlow(LivingEntity entity) {
+		if (this.state != CombatState.GUARDING) {
+			remove(entity, Attributes.MOVEMENT_SPEED, GUARD_SPEED_ID);
+			return;
+		}
+
+		CombatProfile profile = CombatProfiles.forEntity(entity);
+
+		if (profile != null) {
+			scale(entity, Attributes.MOVEMENT_SPEED, GUARD_SPEED_ID,
+					-profile.block().moveSlowFraction());
+		}
 	}
 
 	/**
@@ -474,10 +887,17 @@ public final class CombatController {
 		this.staggerTicks = staggerProfile.ticks(level);
 		applyStaggerModifiers(entity, staggerProfile.speedPenalty(level), staggerProfile.jumpPenalty());
 
-		if (this.state == CombatState.NEUTRAL || this.state == CombatState.ATTACK_STARTUP) {
+		if (this.state == CombatState.NEUTRAL || this.state == CombatState.ATTACK_STARTUP
+				|| this.state == CombatState.GUARD_RAISE || this.state == CombatState.GUARDING) {
 			// Cancels a wind-up; a committed attack is left alone. See class docs.
+			//
+			// A guard is knocked down for the same reason a wind-up is cancelled: the
+			// only hits that reach here while one is up are the ones it did not cover —
+			// from behind, or of a kind it cannot stop — and those should put it down.
+			// The tail is not included, which keeps it as committed as attack recovery.
 			this.attack = null;
 			this.activeHitConsumed = false;
+			dropGuardHold();
 			enter(entity, CombatState.STAGGERED, this.staggerTicks);
 		}
 	}
@@ -487,7 +907,18 @@ public final class CombatController {
 			case ATTACK_STARTUP -> enter(entity, CombatState.ATTACK_ACTIVE, this.attack.activeTicks());
 			case ATTACK_ACTIVE -> enter(entity, CombatState.ATTACK_RECOVERY, this.attack.recoveryTicks());
 			case DODGE_ACTIVE -> enter(entity, CombatState.DODGE_RECOVERY, dodgeRecoveryTicks(entity));
-			case ATTACK_RECOVERY, STAGGERED, DODGE_RECOVERY -> returnToNeutral(entity);
+			case GUARD_RAISE -> enter(entity, CombatState.GUARDING, CombatConstants.GUARD_LEASE_TICKS);
+			// The lease ran out. Renew it while the actor is still asking; otherwise
+			// this is how a guard whose release was never heard puts itself down.
+			case GUARDING -> {
+				if (this.guardHeld) {
+					enter(entity, CombatState.GUARDING, CombatConstants.GUARD_LEASE_TICKS);
+				} else {
+					enter(entity, CombatState.GUARD_RECOVERY, guardRecoveryTicks(entity));
+				}
+			}
+			case ATTACK_RECOVERY, STAGGERED, DODGE_RECOVERY, GUARD_RECOVERY ->
+					returnToNeutral(entity);
 			case NEUTRAL -> {
 			}
 		}
@@ -518,6 +949,7 @@ public final class CombatController {
 			return;
 		}
 
+		syncGuardSlow(entity);
 		syncPhase(entity);
 	}
 
@@ -527,6 +959,13 @@ public final class CombatController {
 		this.phaseTotalTicks = 0;
 		this.attack = null;
 		this.activeHitConsumed = false;
+
+		// A guard that reaches neutral is over, however it got here. A client still
+		// holding its key raises a fresh one on its next keepalive, which is what lets
+		// a held guard come back by itself after a stagger — but only once the gates
+		// that refused it in the first place have cleared.
+		dropGuardHold();
+		syncGuardSlow(entity);
 		syncPhase(entity);
 	}
 
@@ -610,13 +1049,19 @@ public final class CombatController {
 	 * <p>The player joins this the moment it gains real attack phases, by gaining
 	 * the verb. Nothing here names an entity type.
 	 *
-	 * <p>Dodge phases are the exception and are always drawn: vanilla has no roll to
-	 * be in competition with, so there is nothing to suppress and nothing that could
-	 * be left half-drawn. This is what lets the player be animated for dodging while
-	 * its swing is still vanilla's to draw.
+	 * <p>Dodge, guard and stagger phases are the exception and are always drawn:
+	 * vanilla has no roll to be in competition with, its own blocking is gone, and its
+	 * hit reaction is a red flash rather than a pose — so in none of the three is
+	 * there anything to suppress or anything that could be left half-drawn. This is
+	 * what lets the player be animated for those while its swing is still vanilla's to
+	 * draw, and without it the player, which has no {@link CombatVerb#PHASED_MELEE},
+	 * would never be told about its own guard or its own stagger at all.
+	 *
+	 * <p>Stagger in particular has to be here: a guard break puts the player straight
+	 * into one, and a punishment nobody can see does not read as a punishment.
 	 */
 	private static boolean animatesPhases(LivingEntity entity, CombatState state) {
-		if (state.isDodge()) {
+		if (state.isDodge() || state.isGuard() || state == CombatState.STAGGERED) {
 			return true;
 		}
 

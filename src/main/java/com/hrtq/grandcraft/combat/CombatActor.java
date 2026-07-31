@@ -28,7 +28,7 @@ public enum CombatActor {
 	 * layer to hide a server-side delay behind.
 	 */
 	PLAYER("player", Player.class,
-			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE),
+			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK),
 			new ActorSettings(
 					0, 3, 4,
 					StatRange.of(1.0),
@@ -52,7 +52,33 @@ public enum CombatActor {
 					// moment you see anything leaves the six tick tail exposed. The
 					// cost is deliberately above a swing's, so trading attacks for
 					// dodges is a real budget decision rather than a free extra option.
-					new DodgeSettings(7, 6, 95, 18))),
+					new DodgeSettings(7, 6, 95, 18),
+					// Three ticks to come up against a zombie's five tick wind-up: reading
+					// the telegraph early is enough, reacting to the hit itself is not.
+					//
+					// The absorb cost is tuned against a whole fight rather than against a
+					// single swing. Costing what a swing costs was the first attempt and
+					// was badly wrong: a swing is an occasional choice, while blocking is
+					// continuous under pressure, so the pool funded about seven hits and
+					// the guard then collapsed on a six second timer forever. At 2.50 a
+					// point of damage a zombie swing costs 7.5, which against one attacker
+					// is a slow net loss — twenty seconds of pure blocking — and against
+					// two is a rout. Fighting back is meant to be the way out, not
+					// outlasting them from behind the guard.
+					//
+					// A shield pays six tenths of the absorb, which is the whole reason to
+					// carry one now that vanilla's own blocking is gone.
+					//
+					// The arc is 135 rather than vanilla's 90 because 90 puts the boundary
+					// exactly where a mob shoving into your side ends up. Entity push
+					// settles a zombie at roughly a hitbox width away, and from there its
+					// angle hovers around ninety degrees and crosses back and forth with
+					// every step — so the same attack blocked or landed at close to random.
+					// Widening it to 120 fixed most of that; 135 puts the boundary well
+					// clear of where a crowding attacker sits, and still leaves a ninety
+					// degree cone behind the actor that no guard covers, which is the rule
+					// the arc exists for.
+					new BlockSettings(3, 3, 10, 250, 2, 135, 40, 60))),
 
 	/**
 	 * Covers the whole zombie family — husk, drowned, zombie villager — since they
@@ -75,7 +101,10 @@ public enum CombatActor {
 					// No dodge: the zombie lacks the verb, and would also need a goal
 					// to decide when to use one. Zeroed rather than left at the
 					// player's numbers so the config screen shows the truth.
-					new DodgeSettings(0, 0, 0, 0)));
+					new DodgeSettings(0, 0, 0, 0),
+					// No guard either, and zeroed for the same reason: the arc is the off
+					// switch, so nothing the zombie does can ever fall inside it.
+					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0)));
 
 	private final String id;
 	private final Class<? extends LivingEntity> type;
@@ -132,6 +161,11 @@ public enum CombatActor {
 	/** @see CombatVerb#DODGE */
 	public boolean usesDodge() {
 		return has(CombatVerb.DODGE);
+	}
+
+	/** @see CombatVerb#BLOCK */
+	public boolean usesBlock() {
+		return has(CombatVerb.BLOCK);
 	}
 
 	public ActorSettings defaults() {

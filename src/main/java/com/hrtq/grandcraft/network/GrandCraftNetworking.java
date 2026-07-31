@@ -44,6 +44,8 @@ public final class GrandCraftNetworking {
 				.register(CombatPhasePayload.TYPE, CombatPhasePayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay()
 				.register(DodgePayload.TYPE, DodgePayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(GuardPayload.TYPE, GuardPayload.STREAM_CODEC);
 
 		registerClassSelection();
 		registerCombatConfig();

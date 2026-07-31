@@ -34,6 +34,7 @@ public class GrandCraftClient implements ClientModInitializer {
 				ClientAttackLockout.clear();
 				ClientStamina.clear();
 				ClientCombatPhases.clear();
+				ClientGuard.clear();
 				ClientGameSettings.set(GameSettings.DEFAULT);
 				return;
 			}
@@ -46,6 +47,11 @@ public class GrandCraftClient implements ClientModInitializer {
 			// dropped packet leaving an actor posed forever, and turning animations
 			// off mid-swing must not be the thing that strands one.
 			ClientCombatPhases.tick(client.level, Util.getMillis());
+
+			// Deliberately last, and deliberately at the end of the tick: the hold is
+			// not latched until handleKeybinds has already had this tick's press, which
+			// is what leaves ordinary right-click interaction working. See ClientGuard.
+			ClientGuard.tick(client);
 		});
 	}
 }

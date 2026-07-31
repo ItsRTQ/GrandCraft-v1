@@ -13,15 +13,17 @@ public record CombatProfile(
 		StaggerProfile stagger,
 		StaminaSettings stamina,
 		DodgeSettings dodge,
+		BlockSettings block,
 		StatRange health,
 		StatRange damage,
 		StatRange speed,
 		StatRange defence) {
 
 	public CombatProfile {
-		if (actor == null || melee == null || stagger == null || stamina == null || dodge == null) {
+		if (actor == null || melee == null || stagger == null || stamina == null
+				|| dodge == null || block == null) {
 			throw new IllegalArgumentException(
-					"A combat profile needs an actor, melee, stagger, stamina and dodge profile");
+					"A combat profile needs an actor, melee, stagger, stamina, dodge and block profile");
 		}
 	}
 
@@ -43,5 +45,13 @@ public record CombatProfile(
 	 */
 	public boolean usesDodge() {
 		return this.actor.has(CombatVerb.DODGE) && this.dodge.enabled();
+	}
+
+	/**
+	 * Whether this actor can guard, combining the compile-time opt-in with the
+	 * runtime config switch — the same two-part rule as {@link #usesStamina()}.
+	 */
+	public boolean usesBlock() {
+		return this.actor.has(CombatVerb.BLOCK) && this.block.enabled();
 	}
 }

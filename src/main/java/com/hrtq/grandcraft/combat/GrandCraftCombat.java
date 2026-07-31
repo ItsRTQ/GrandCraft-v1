@@ -3,15 +3,22 @@ package com.hrtq.grandcraft.combat;
 import com.hrtq.grandcraft.network.AttackLockoutPayload;
 import com.hrtq.grandcraft.network.AttackMissPayload;
 import com.hrtq.grandcraft.network.DodgePayload;
+import com.hrtq.grandcraft.network.GuardPayload;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
 
@@ -26,6 +33,38 @@ import net.minecraft.world.phys.Vec3;
  * goal's internal attack call — see {@code MeleeAttackGoalMixin}.
  */
 public final class GrandCraftCombat {
+	/** A few flecks, not a shower — this fires on every blocked hit. */
+	private static final int GUARD_PARTICLE_COUNT = 5;
+
+	/**
+	 * How loosely the flecks start out around the point of contact, in blocks. Tight,
+	 * because they are thrown outward from it rather than scattered across it.
+	 */
+	private static final double GUARD_PARTICLE_SPREAD = 0.05;
+
+	/**
+	 * How hard the flecks are thrown outward, and it has to be read alongside what the
+	 * particle does with it rather than as a speed.
+	 *
+	 * <p>{@code GlowParticle$WaxOffProvider} ignores the velocity it is handed and
+	 * substitutes {@code speed * 0.01} vertically and {@code speed * 0.005} sideways,
+	 * so an ordinary-looking figure here comes out as invisible drift. Twenty five is
+	 * about an eighth of a block a tick sideways once that scaling is applied, which
+	 * with the particle's own friction of 0.96 is a burst that flies clear of the
+	 * impact and then settles.
+	 *
+	 * <p>Vertical travel ends up twice the horizontal, since only the sideways axes
+	 * are halved. That suits a shower of sparks off a parried blow, so it is left
+	 * alone rather than corrected for.
+	 */
+	private static final double GUARD_PARTICLE_SPEED = 25.0;
+
+	/** How far from the defender's chest, towards the attacker, the burst sits. */
+	private static final double GUARD_PARTICLE_REACH = 0.45;
+
+	/** Where up the hitbox the chest is, as a fraction of its height. */
+	private static final double CHEST_HEIGHT = 0.75;
+
 	private GrandCraftCombat() {
 	}
 
@@ -140,23 +179,155 @@ public final class GrandCraftCombat {
 			}
 		});
 
-		// A dodge that is running makes damage miss outright. ALLOW_DAMAGE is a veto,
-		// which is exactly the shape i-frames want — nothing to reduce, only to refuse.
+		// Both defensive verbs refuse damage outright rather than reducing it, so both
+		// fit ALLOW_DAMAGE — a veto with nothing to scale. A guard that absorbs
+		// everything it covers is the same shape as a dodge that is not there to be
+		// hit, and refusing here is what keeps the red hurt flash, the damage sound and
+		// the knockback from firing on a hit that never landed. Vanilla only suppresses
+		// those for a real BLOCKS_ATTACKS item, and ours is deliberately gone.
 		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
 			CombatController controller = entity.getAttached(GrandCraftAttachments.COMBAT_CONTROLLER);
 
-			if (controller == null || !controller.isDodgeInvulnerable()) {
+			if (controller == null) {
 				return true;
 			}
 
-			// A dodge evades attacks, not consequences. Anything that bypasses ordinary
+			// Neither verb evades consequences. Anything that bypasses ordinary
 			// invulnerability — the void, starvation, /kill — still lands, using
 			// vanilla's own tag rather than a list of damage types that would rot.
-			return source.is(DamageTypeTags.BYPASSES_INVULNERABILITY) || source.isCreativePlayer();
+			boolean unavoidable = source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)
+					|| source.isCreativePlayer();
+
+			if (controller.isDodgeInvulnerable()) {
+				return unavoidable;
+			}
+
+			if (!controller.isGuarding() || unavoidable) {
+				return true;
+			}
+
+			CombatProfile profile = CombatProfiles.forEntity(entity);
+
+			if (profile == null || !profile.usesBlock()) {
+				return true;
+			}
+
+			// Outside the arc the guard simply is not in the way: full damage, and the
+			// ordinary stagger that follows is what knocks it down.
+			if (!CombatController.coversDirection(entity, profile, source)) {
+				return true;
+			}
+
+			controller.absorbBlockedHit(entity, profile, amount);
+
+			// Read after absorbing, because that is what may have broken the guard.
+			playGuardSound(entity, controller.isGuarding()
+					? SoundEvents.SHIELD_BLOCK
+					: SoundEvents.SHIELD_BREAK);
+
+			spawnGuardParticles(entity, source);
+
+			// Silent while the guard holds — attackLockoutTicks reports nothing for a
+			// held guard — and a real lockout once it has broken into a stagger.
+			notifyLockout(entity, controller);
+			return false;
 		});
 
 		registerMissPenalty();
 		registerDodge();
+		registerGuard();
+	}
+
+	/**
+	 * Raises, renews and drops the player's guard.
+	 *
+	 * <p>The client reports only that a key is held. Whether that becomes a guard,
+	 * what it costs and what it stops are all decided here, and the off-hand is read
+	 * server side — so a modified client cannot claim a shield it is not carrying.
+	 */
+	private static void registerGuard() {
+		ServerPlayNetworking.registerGlobalReceiver(GuardPayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+			CombatProfile profile = CombatProfiles.forEntity(player);
+
+			if (profile == null || !profile.usesBlock()) {
+				return;
+			}
+
+			CombatController controller = controllerOf(player);
+
+			if (!payload.held()) {
+				controller.releaseGuard(player, profile);
+				return;
+			}
+
+			// The same message does double duty. The two calls are mutually exclusive by
+			// construction — one only acts while a guard is up, the other only from
+			// neutral — which is what lets a player who never let go get their guard
+			// back on its own the moment a stagger or an empty pool stops refusing it.
+			controller.refreshGuardHold();
+			controller.beginGuard(player, profile);
+		});
+	}
+
+	/**
+	 * Plays the guard's own feedback.
+	 *
+	 * <p>Necessary rather than decorative: vanilla plays a block sound only when a
+	 * real {@code BLOCKS_ATTACKS} item did the blocking, and refusing the damage means
+	 * none of its usual hit feedback fires either. Without this a blocked hit would be
+	 * completely silent, which reads as the hit having missed.
+	 *
+	 * <p>Pitch jitter matches vanilla's own for a shield block.
+	 */
+	private static void playGuardSound(LivingEntity entity, Holder<SoundEvent> sound) {
+		entity.level().playSound(null, entity.getX(), entity.getY(), entity.getZ(),
+				sound, entity.getSoundSource(),
+				1.0F, 0.8F + entity.getRandom().nextFloat() * 0.4F);
+	}
+
+	/**
+	 * Scatters a few sparks off the guard where the blow landed on it.
+	 *
+	 * <p>The sound says something was stopped; this says <em>where</em>, which is the
+	 * part that teaches. A guard has an arc, and a player who cannot see the point of
+	 * contact has no way to learn where its edge is except by dying near it.
+	 *
+	 * <p>Placed between the two fighters at chest height rather than at the defender's
+	 * feet, which is where the position of a {@code LivingEntity} actually is. Falls
+	 * back to the defender's own chest when the damage has no position — rare, since
+	 * the arc test already refuses those, but the guard costs nothing.
+	 *
+	 * <p>{@code WAX_OFF} is used for its look rather than its meaning: a short-lived
+	 * scatter of pale flecks, which reads as a glancing impact and is already in every
+	 * resource pack.
+	 */
+	private static void spawnGuardParticles(LivingEntity entity, DamageSource source) {
+		if (!(entity.level() instanceof ServerLevel level)) {
+			return;
+		}
+
+		Vec3 chest = entity.position().add(0.0, entity.getBbHeight() * CHEST_HEIGHT, 0.0);
+		Vec3 sourcePos = source.getSourcePosition();
+		Vec3 at = chest;
+
+		if (sourcePos != null) {
+			Vec3 towards = new Vec3(sourcePos.x - chest.x, 0.0, sourcePos.z - chest.z);
+
+			// Normalised only when there is a direction to take; a source standing
+			// exactly on the defender leaves the burst on the chest.
+			if (towards.lengthSqr() > 1.0E-6) {
+				at = chest.add(towards.normalize().scale(GUARD_PARTICLE_REACH));
+			}
+		}
+
+		// With a count above zero the three distances are random position offsets and
+		// the last argument is the speed each fleck is thrown at, in a random
+		// direction — which is what makes this a burst rather than a puff.
+		level.sendParticles(ParticleTypes.WAX_OFF, at.x, at.y, at.z,
+				GUARD_PARTICLE_COUNT,
+				GUARD_PARTICLE_SPREAD, GUARD_PARTICLE_SPREAD, GUARD_PARTICLE_SPREAD,
+				GUARD_PARTICLE_SPEED);
 	}
 
 	/**

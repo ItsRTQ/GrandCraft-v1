@@ -46,7 +46,13 @@ public final class ClientDodge {
 		// filling the channel with requests that are only going to be dropped. The
 		// server remains the one that decides — a client that skipped these would gain
 		// nothing but its own wasted packets.
-		if (ClientCombatPhases.stateOf(player.getId(), Util.getMillis()) != CombatState.NEUTRAL) {
+		//
+		// GUARDING is allowed through to match the server, which lets a dodge cancel a
+		// raised guard. Refusing it here would leave the client silently declining
+		// dodges the server would have granted, which is the worst of both.
+		CombatState state = ClientCombatPhases.stateOf(player.getId(), Util.getMillis());
+
+		if (state != CombatState.NEUTRAL && state != CombatState.GUARDING) {
 			return false;
 		}
 

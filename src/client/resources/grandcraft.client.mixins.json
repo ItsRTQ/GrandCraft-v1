@@ -7,13 +7,15 @@
 		"ClientJumpMixin",
 		"EntityRendererMixin",
 		"ExampleClientMixin",
-		"GameRendererDodgeCameraMixin",
+		"GameRendererCombatCameraMixin",
 		"LivingEntityRenderStateMixin",
 		"LivingEntityRendererDodgeMixin",
 		"LivingEntityRendererExtractMixin",
 		"LocalPlayerSprintMixin",
 		"MinecraftAttackMissMixin",
-		"PlayerAttackStrengthMixin"
+		"MinecraftUseItemMixin",
+		"PlayerAttackStrengthMixin",
+		"PlayerModelMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

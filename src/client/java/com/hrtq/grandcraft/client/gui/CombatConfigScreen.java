@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.client.gui;
 
 import com.hrtq.grandcraft.combat.ActorSettings;
+import com.hrtq.grandcraft.combat.BlockSettings;
 import com.hrtq.grandcraft.combat.CombatActor;
 import com.hrtq.grandcraft.combat.CombatSettings;
 import com.hrtq.grandcraft.combat.CombatVerb;
@@ -56,7 +57,9 @@ public class CombatConfigScreen extends Screen {
 	private static final Set<String> EXPLAINED = Set.of(
 			"startup", "recovery", "stagger", "health", "defence",
 			"max_stamina", "regen", "regen_delay", "attack_cost", "sprint_cost", "jump_cost",
-			"dodge_invulnerable", "dodge_recovery", "dodge_speed", "dodge_cost");
+			"dodge_invulnerable", "dodge_recovery", "dodge_speed", "dodge_cost",
+			"block_raise", "block_recovery", "block_break", "block_cost",
+			"block_hold", "block_arc", "block_slow", "block_shield");
 
 	/**
 	 * Which group of settings is on screen.
@@ -68,7 +71,8 @@ public class CombatConfigScreen extends Screen {
 	private enum Section {
 		COMBAT("combat"),
 		STAMINA("stamina"),
-		DODGE("dodge");
+		DODGE("dodge"),
+		BLOCK("block");
 
 		private final String id;
 
@@ -128,6 +132,15 @@ public class CombatConfigScreen extends Screen {
 	private TunableField dodgeSpeed;
 	private TunableField dodgeCost;
 
+	private TunableField blockRaise;
+	private TunableField blockRecovery;
+	private TunableField blockBreak;
+	private TunableField blockCost;
+	private TunableField blockHold;
+	private TunableField blockArc;
+	private TunableField blockSlow;
+	private TunableField blockShield;
+
 	public CombatConfigScreen(CombatSettings settings) {
 		super(Component.translatable("screen.grandcraft.config.title"));
 
@@ -158,14 +171,15 @@ public class CombatConfigScreen extends Screen {
 		root.addChild(new StringWidget(this.title, this.font));
 		root.addChild(buildTabs(actor));
 
-		if (actor.has(CombatVerb.STAMINA) || actor.usesDodge()) {
-			// Only worth a row of its own when there is more than one section to reach.
+		// Only worth a row of its own when there is more than one section to reach.
+		if (sectionCount(actor) > 1) {
 			root.addChild(buildSections(actor));
 		}
 
 		root.addChild(switch (this.activeSection) {
 			case STAMINA -> buildStaminaGrid(seed);
 			case DODGE -> buildDodgeGrid(seed);
+			case BLOCK -> buildBlockGrid(seed);
 			case COMBAT -> buildCombatGrid(actor, seed);
 		});
 
@@ -292,13 +306,78 @@ public class CombatConfigScreen extends Screen {
 		return grid;
 	}
 
+	/**
+	 * The guard group: one value column, no ranges, for the same reason as stamina and
+	 * dodge — these describe how the verb behaves rather than a stat rolled per
+	 * individual.
+	 *
+	 * <p>The largest of the four groups, and the order is the order someone tuning it
+	 * would work in: the timings that decide how committing it is, then what it costs
+	 * to use, then how much of the actor it actually covers.
+	 */
+	private GridLayout buildBlockGrid(ActorSettings seed) {
+		BlockSettings block = seed.block();
+
+		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
+		int row = 0;
+
+		this.blockRaise = ticks(block.raiseTicks(), BlockSettings.MAX_TICKS);
+		row = addValue(grid, row, "block_raise", false, this.blockRaise);
+
+		this.blockRecovery = ticks(block.recoveryTicks(), BlockSettings.MAX_TICKS);
+		row = addValue(grid, row, "block_recovery", false, this.blockRecovery);
+
+		this.blockBreak = ticks(block.breakTicks(), BlockSettings.MAX_TICKS);
+		row = addValue(grid, row, "block_break", false, this.blockBreak);
+
+		this.blockCost = unit(block.costPerDamage(), BlockSettings.MAX_COST_PER_DAMAGE,
+				"hundredths_per_damage");
+		row = addValue(grid, row, "block_cost", false, this.blockCost);
+
+		this.blockHold = perSecond(block.holdCostPerSecond(), BlockSettings.MAX_HOLD_COST);
+		row = addValue(grid, row, "block_hold", false, this.blockHold);
+
+		this.blockArc = unit(block.arcDegrees(), BlockSettings.MAX_ARC_DEGREES, "degrees");
+		row = addValue(grid, row, "block_arc", false, this.blockArc);
+
+		this.blockSlow = unit(block.moveSlowPercent(), BlockSettings.MAX_SLOW_PERCENT, "percent");
+		row = addValue(grid, row, "block_slow", false, this.blockSlow);
+
+		this.blockShield = unit(block.shieldCostPercent(), BlockSettings.MAX_SHIELD_PERCENT,
+				"percent");
+		addValue(grid, row, "block_shield", false, this.blockShield);
+
+		return grid;
+	}
+
 	/** Whether this actor has the verb a section exists to configure. */
 	private static boolean hasSection(CombatActor actor, Section section) {
 		return switch (section) {
 			case COMBAT -> true;
 			case STAMINA -> actor.has(CombatVerb.STAMINA);
 			case DODGE -> actor.usesDodge();
+			case BLOCK -> actor.usesBlock();
 		};
+	}
+
+	/**
+	 * How many sections this actor has anything to show in.
+	 *
+	 * <p>Counted from {@link #hasSection} rather than written out as its own list of
+	 * verbs. The section row's visibility used to be exactly that — a second condition
+	 * naming the same verbs — which is one more place to forget when a verb is added,
+	 * and forgetting it hides every section behind a row that never appears.
+	 */
+	private static int sectionCount(CombatActor actor) {
+		int count = 0;
+
+		for (Section section : Section.values()) {
+			if (hasSection(actor, section)) {
+				count++;
+			}
+		}
+
+		return count;
 	}
 
 	/** A single value in the label column and the first value column. */
@@ -492,7 +571,8 @@ public class CombatConfigScreen extends Screen {
 							this.attackCost.intValue(),
 							this.sprintCost.intValue(),
 							this.jumpCost.intValue()),
-					stored.dodge());
+					stored.dodge(),
+					stored.block());
 		}
 
 		if (this.sectionFor == Section.DODGE) {
@@ -509,7 +589,30 @@ public class CombatConfigScreen extends Screen {
 							this.dodgeInvulnerable.intValue(),
 							this.dodgeRecovery.intValue(),
 							this.dodgeSpeed.intValue(),
-							this.dodgeCost.intValue()));
+							this.dodgeCost.intValue()),
+					stored.block());
+		}
+
+		if (this.sectionFor == Section.BLOCK) {
+			return new ActorSettings(
+					stored.startupTicks(),
+					stored.recoveryTicks(),
+					stored.staggerTicks(),
+					stored.health(),
+					stored.damage(),
+					stored.speed(),
+					stored.defence(),
+					stored.stamina(),
+					stored.dodge(),
+					new BlockSettings(
+							this.blockRaise.intValue(),
+							this.blockRecovery.intValue(),
+							this.blockBreak.intValue(),
+							this.blockCost.intValue(),
+							this.blockHold.intValue(),
+							this.blockArc.intValue(),
+							this.blockSlow.intValue(),
+							this.blockShield.intValue()));
 		}
 
 		return new ActorSettings(
@@ -521,7 +624,8 @@ public class CombatConfigScreen extends Screen {
 				percentBand(this.speedMin, this.speedMax),
 				pointsBand(this.defenceMin, this.defenceMax),
 				stored.stamina(),
-				stored.dodge());
+				stored.dodge(),
+				stored.block());
 	}
 
 	/** A fixed stat has no max field, so its band collapses onto the single value. */

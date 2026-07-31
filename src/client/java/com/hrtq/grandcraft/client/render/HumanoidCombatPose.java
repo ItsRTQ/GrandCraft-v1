@@ -1,8 +1,12 @@
 package com.hrtq.grandcraft.client.render;
 
+import com.hrtq.grandcraft.combat.CombatController;
 import com.hrtq.grandcraft.combat.CombatState;
 import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.renderer.entity.state.ArmedEntityRenderState;
 import net.minecraft.util.Ease;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.HumanoidArm;
 
 /**
  * Draws a combat phase onto the shared humanoid rig.
@@ -45,6 +49,30 @@ public final class HumanoidCombatPose {
 	}
 
 	/**
+	 * Which arm this actor would be blocking with, read off the render state.
+	 *
+	 * <p>Defers to {@link CombatController#guardHand} rather than re-deciding, so the
+	 * arm that is drawn is by construction the arm the server charges wear to and
+	 * applies the shield discount for. Getting that from the render state rather than
+	 * over the wire also means it costs no packet and works for every player in view,
+	 * not just the one holding the key.
+	 *
+	 * @return the guarding arm, or null when nothing in either hand can guard
+	 */
+	public static HumanoidArm guardArmOf(ArmedEntityRenderState state) {
+		HumanoidArm main = state.mainArm;
+		InteractionHand hand = CombatController.guardHand(
+				state.getMainHandItemStack(),
+				main == HumanoidArm.RIGHT ? state.leftHandItemStack : state.rightHandItemStack);
+
+		if (hand == null) {
+			return null;
+		}
+
+		return hand == InteractionHand.MAIN_HAND ? main : main.getOpposite();
+	}
+
+	/**
 	 * One posture. Symmetric by construction — the two arms are never posed
 	 * independently, which is what keeps this to four numbers.
 	 *
@@ -78,18 +106,77 @@ public final class HumanoidCombatPose {
 	private static final Posture FLINCH = new Posture(0.40F, 0.35F, 0.40F, -0.35F);
 
 	/**
+	 * How far forward the guarding arm comes.
+	 *
+	 * <p>Well short of the quarter turn that would hold it dead level. Straight out
+	 * reads as pointing at something rather than guarding against it — a braced arm
+	 * keeps a little bend out of the shoulder, and dropping the hand below the
+	 * shoulder line is what suggests that on a rig with no elbow to bend.
+	 */
+	private static final float GUARD_ARM_X_ROT = (float) Math.toRadians(-65.0);
+
+	/**
+	 * How far the guarding arm swings in across the body, for a right arm; mirrored
+	 * for a left one.
+	 *
+	 * <p>This is what puts the arm in front of the <em>torso</em> rather than out to
+	 * the side of it. The shoulder sits a good way off the centre line, so an arm
+	 * raised without this covers the air beside the actor and leaves the middle of the
+	 * body open — which looks like presenting a weapon rather than hiding behind one.
+	 *
+	 * <p>Large, and it needs to be. The shoulder is far enough off centre that a
+	 * modest swing still leaves the arm out in open air beside the body; only once it
+	 * is well past halfway does it start to look tucked in against the chest.
+	 *
+	 * <p><strong>Negative is inward for an arm pitched forward like this</strong>, and
+	 * that is the opposite of what {@link Posture#armSpread()} would suggest — it is
+	 * negated for the right arm and opens the arms when positive. The first attempt
+	 * here trusted that convention and swung the arm out to the side instead. The
+	 * convention is not wrong so much as narrow: it describes arms near their resting
+	 * pitch, where {@code yRot} barely moves them, and this one is a quarter turn away
+	 * from that. Take the sign from what the rig does, not from the neighbouring
+	 * constant.
+	 */
+	private static final float GUARD_ARM_Y_ROT = (float) Math.toRadians(-55.0);
+
+	/**
+	 * How far the guarding arm turns about its own length once it is out in front,
+	 * for a right arm; mirrored for a left one. Thirty degrees, turned inward so the
+	 * weapon lies across the line between the two fighters.
+	 *
+	 * <p>Applied as {@code zRot}, which is the outermost of the three rotations — a
+	 * {@code ModelPart} composes them Z, then Y, then X — so it turns the arm as a
+	 * whole after the pitch above has already aimed it forward.
+	 *
+	 * <p>Positive is outward, following {@link Posture#armRoll()}. Outward is right
+	 * here because the arm is already swung hard in across the chest by
+	 * {@link #GUARD_ARM_Y_ROT}: rolling it further inward on top of that folded the
+	 * weapon back towards the actor instead of laying it across the front.
+	 */
+	private static final float GUARD_ARM_ROLL = (float) Math.toRadians(30.0);
+
+	/**
 	 * Poses the rig for one frame.
 	 *
 	 * <p>Takes the parts rather than the model so it is not tied to any one model
 	 * class — the player's rig is the same three parts.
 	 *
 	 * @param progress how far through the phase, 0 to 1, interpolated between ticks
+	 * @param guardArm the arm holding what the actor is blocking with, or null when it
+	 *                 is not blocking with anything; only read for the guard phases
 	 */
 	public static void apply(ModelPart head, ModelPart rightArm, ModelPart leftArm,
-			CombatState phase, float progress) {
+			CombatState phase, float progress, HumanoidArm guardArm) {
 		float blend = blend(phase, progress);
 
 		if (blend <= 0.0F) {
+			return;
+		}
+
+		// The guard is the one pose that is not symmetric, so it does not go through
+		// Posture at all — see applyGuard.
+		if (phase.isGuard()) {
+			applyGuard(rightArm, leftArm, guardArm, blend);
 			return;
 		}
 
@@ -142,6 +229,14 @@ public final class HumanoidCombatPose {
 			// so it is drawn elsewhere and this leaves the rig alone. A tuck — arms in,
 			// legs drawn up — belongs here once the roll rotation exists to tuck into.
 			case NEUTRAL, DODGE_ACTIVE, DODGE_RECOVERY -> 0.0F;
+			// Same envelope as the attack: up quickly so the stance is legible for
+			// almost the whole raise, and released slowly onto exactly zero.
+			case GUARD_RAISE -> Ease.outCubic(t);
+			// Flat, and it must stay flat. A held guard is announced in renewing
+			// leases, so its progress runs 0 to 1 over and over for as long as it is
+			// up — reading it here would make the stance pulse once a second.
+			case GUARDING -> 1.0F;
+			case GUARD_RECOVERY -> 1.0F - Ease.inOutCubic(t);
 		};
 	}
 
@@ -160,7 +255,47 @@ public final class HumanoidCombatPose {
 			case STAGGERED -> FLINCH;
 			// See blend(): the dodge phases are drawn as a body rotation, not here.
 			case NEUTRAL, DODGE_ACTIVE, DODGE_RECOVERY -> null;
+			// The guard has no Posture: it is asymmetric and handled before this is
+			// ever reached. See applyGuard.
+			case GUARD_RAISE, GUARDING, GUARD_RECOVERY -> null;
 		};
+	}
+
+	/**
+	 * Raises the one arm that is doing the blocking, and leaves everything else alone.
+	 *
+	 * <p>The only asymmetric pose in the file, and deliberately outside {@link Posture}
+	 * rather than a widening of it. Every other posture here is a whole-body shape
+	 * where symmetry is the point — it is what makes an attack read from any angle. A
+	 * guard is the opposite kind of thing: it is <em>an object held in a hand</em>, and
+	 * which hand is the entire content of the pose. Generalising Posture to carry two
+	 * of every value would have made the four attack numbers eight to serve this one
+	 * case.
+	 *
+	 * <p>Nothing but that arm moves. An earlier symmetric version brought both arms up
+	 * and read unmistakably as a hug — the body language of blocking is one limb
+	 * interposed, not two arms closed.
+	 *
+	 * <p>A null arm draws nothing rather than guessing. It means the item left the
+	 * hand, which the server also treats as the end of the guard, so the pose is
+	 * about to be retracted anyway.
+	 */
+	private static void applyGuard(ModelPart rightArm, ModelPart leftArm,
+			HumanoidArm guardArm, float blend) {
+		if (guardArm == null) {
+			return;
+		}
+
+		boolean right = guardArm == HumanoidArm.RIGHT;
+		ModelPart arm = right ? rightArm : leftArm;
+
+		// Both sideways values are mirrored for a left arm, the same way the symmetric
+		// postures mirror theirs, so "inward" means inward on either side.
+		float mirror = right ? 1.0F : -1.0F;
+
+		arm.xRot = mix(arm.xRot, GUARD_ARM_X_ROT, blend);
+		arm.yRot = mix(arm.yRot, GUARD_ARM_Y_ROT * mirror, blend);
+		arm.zRot = mix(arm.zRot, GUARD_ARM_ROLL * mirror, blend);
 	}
 
 	private static Posture lerp(Posture from, Posture to, float t) {

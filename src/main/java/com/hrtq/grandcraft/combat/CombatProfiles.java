@@ -67,10 +67,11 @@ public final class CombatProfiles {
 
 			// An actor that does not roll reads each band as a fixed value, so the
 			// same profile shape serves both without a second schema.
-			// An actor without the dodge verb keeps whatever is configured but never
-			// reaches it, exactly as with stamina — usesDodge() combines the two.
+			// An actor without the dodge or block verb keeps whatever is configured but
+			// never reaches it, exactly as with stamina — usesDodge() and usesBlock()
+			// each combine the two halves.
 			PROFILES.put(actor, new CombatProfile(actor, melee, StaggerProfile.from(values),
-					values.stamina(), values.dodge(),
+					values.stamina(), values.dodge(), values.block(),
 					values.health(), values.damage(), values.speed(), values.defence()));
 		}
 	}

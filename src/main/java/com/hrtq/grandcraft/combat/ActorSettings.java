@@ -30,7 +30,8 @@ public record ActorSettings(
 		StatRange speed,
 		StatRange defence,
 		StaminaSettings stamina,
-		DodgeSettings dodge) {
+		DodgeSettings dodge,
+		BlockSettings block) {
 
 	/** Bounds shared by the config fields and the server-side clamp. */
 	public static final int MAX_PHASE_TICKS = 40;
@@ -82,7 +83,9 @@ public record ActorSettings(
 				StaminaSettings.codec(fallback.stamina()).optionalFieldOf("stamina", fallback.stamina())
 						.forGetter(ActorSettings::stamina),
 				DodgeSettings.codec(fallback.dodge()).optionalFieldOf("dodge", fallback.dodge())
-						.forGetter(ActorSettings::dodge)
+						.forGetter(ActorSettings::dodge),
+				BlockSettings.codec(fallback.block()).optionalFieldOf("block", fallback.block())
+						.forGetter(ActorSettings::block)
 		).apply(instance, ActorSettings::new));
 	}
 
@@ -97,6 +100,7 @@ public record ActorSettings(
 				StatRange.STREAM_CODEC.encode(buf, settings.defence());
 				StaminaSettings.STREAM_CODEC.encode(buf, settings.stamina());
 				DodgeSettings.STREAM_CODEC.encode(buf, settings.dodge());
+				BlockSettings.STREAM_CODEC.encode(buf, settings.block());
 			},
 			buf -> new ActorSettings(
 					buf.readInt(), buf.readInt(), buf.readInt(),
@@ -105,7 +109,8 @@ public record ActorSettings(
 					StatRange.STREAM_CODEC.decode(buf),
 					StatRange.STREAM_CODEC.decode(buf),
 					StaminaSettings.STREAM_CODEC.decode(buf),
-					DodgeSettings.STREAM_CODEC.decode(buf)));
+					DodgeSettings.STREAM_CODEC.decode(buf),
+					BlockSettings.STREAM_CODEC.decode(buf)));
 
 	/**
 	 * A copy with every value forced inside its bounds. Always applied to anything
@@ -122,7 +127,8 @@ public record ActorSettings(
 				this.speed.clamped(0.0, MAX_SPEED_MULTIPLIER),
 				this.defence.clamped(0.0, MAX_DEFENCE),
 				this.stamina.clamped(),
-				this.dodge.clamped());
+				this.dodge.clamped(),
+				this.block.clamped());
 	}
 
 	private static int clamp(int value, int min, int max) {
