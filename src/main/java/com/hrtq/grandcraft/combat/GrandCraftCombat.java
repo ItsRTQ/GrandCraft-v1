@@ -145,6 +145,11 @@ public final class GrandCraftCombat {
 
 			CombatController controller = controllerOf(player);
 
+			// Swinging out of a raised guard lowers it rather than being refused, so a
+			// blocked hit can be answered immediately. Before the gate below, because
+			// GUARDING is not NEUTRAL and would otherwise fail it.
+			controller.cancelGuardForAttack(player, profile);
+
 			// Locked out by recovery, a stagger, or an empty stamina pool: the swing is
 			// refused outright. Any non-PASS result cancels vanilla's Player.attack.
 			if (!controller.canStartAttack(profile)) {
@@ -390,6 +395,11 @@ public final class GrandCraftCombat {
 			}
 
 			CombatController controller = controllerOf(player);
+
+			// Same as a connecting swing: committing to an attack lowers the guard.
+			// Handled here too so a whiff cannot be a free way to swing from behind a
+			// guard that stays up.
+			controller.cancelGuardForAttack(player, profile);
 
 			if (!controller.canStartAttack(profile)) {
 				return;

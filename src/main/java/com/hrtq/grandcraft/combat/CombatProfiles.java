@@ -63,7 +63,7 @@ public final class CombatProfiles {
 			// slider for the same reason.
 			int startup = actor.usesMeleeGoal() ? values.startupTicks() : 0;
 			AttackProfile melee =
-					new AttackProfile(startup, CombatConstants.ACTIVE_TICKS, values.recoveryTicks());
+					new AttackProfile(startup, values.activeTicks(), values.recoveryTicks());
 
 			// An actor that does not roll reads each band as a fixed value, so the
 			// same profile shape serves both without a second schema.

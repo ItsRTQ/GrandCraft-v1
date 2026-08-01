@@ -2,8 +2,18 @@ package com.hrtq.grandcraft.combat;
 
 import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.network.CombatPhasePayload;
+import com.hrtq.grandcraft.network.ManaPayload;
 import com.hrtq.grandcraft.network.StaminaPayload;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import com.hrtq.grandcraft.progression.EssenceAwards;
+import com.hrtq.grandcraft.stats.GrandCraftAttributes;
+import com.hrtq.grandcraft.stats.ManaPool;
+import com.hrtq.grandcraft.stats.ManaSettings;
+import com.hrtq.grandcraft.stats.PoolBlock;
+import com.hrtq.grandcraft.stats.StaminaScaling;
+import com.hrtq.grandcraft.stats.StatEffects;
+import com.hrtq.grandcraft.stats.StatSettings;
+import com.hrtq.grandcraft.stats.StatTuning;
 import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Holder;
@@ -72,6 +82,9 @@ public final class CombatController {
 
 	private final StaminaPool stamina = new StaminaPool();
 
+	/** Only players have one filled; see {@link #syncStatEffects}. */
+	private final ManaPool mana = new ManaPool();
+
 	private CombatState state = CombatState.NEUTRAL;
 
 	/** Ticks left in the current timed state. */
@@ -125,6 +138,14 @@ public final class CombatController {
 	private boolean syncedExhausted;
 
 	/**
+	 * The ceiling as last reported, tracked for the same reason the mana one is: buying
+	 * an attribute point moves the maximum without moving the current value, and a
+	 * client told only the value would keep drawing the old bar. Starts at a value no
+	 * real pool can hold so the first tick always sends.
+	 */
+	private float syncedStaminaMax = -1.0F;
+
+	/**
 	 * The profile whose permanent modifiers are currently on the entity, so the
 	 * attributes are only touched when tuning actually changes.
 	 *
@@ -135,6 +156,49 @@ public final class CombatController {
 
 	/** The rolled stats currently expressed as modifiers, or null before the first apply. */
 	private RolledStats appliedStats;
+
+	/**
+	 * The stat settings currently expressed on this entity, compared by identity for
+	 * the same reason {@link #appliedProfile} is: {@code StatTuning} swaps the whole
+	 * immutable object, so a new reference is exactly the signal to re-apply.
+	 *
+	 * <p>Without this an admin raising the armour-per-Constitution figure would not
+	 * move anyone's armour until their Constitution happened to change.
+	 */
+	private StatSettings appliedStatSettings;
+
+	/**
+	 * The stat values those effects were computed from. NaN before the first pass,
+	 * which is deliberate — NaN compares unequal to itself, so the first tick always
+	 * applies without needing a separate flag.
+	 */
+	private double appliedConstitution = Double.NaN;
+	private double appliedAgility = Double.NaN;
+
+	/**
+	 * The attribute points currently expressed as pool ceilings and a health modifier.
+	 *
+	 * <p>Null before the first pass, which is what makes that pass always run — the
+	 * same job {@code Double.NaN} does for the two stats above, in the form a record
+	 * reference can take.
+	 */
+	private PoolBlock appliedPoolPoints;
+
+	/** What this actor's stats do to its stamina. Neutral until a stat pass runs. */
+	private StaminaScaling staminaScaling = StaminaScaling.NONE;
+
+	/** Ticks before another routine mana packet may be sent. */
+	private int manaSyncDelay;
+
+	/** The pool as the owner's client last heard it. See {@link #syncedStamina}. */
+	private float syncedMana = -1.0F;
+
+	/**
+	 * The ceiling as last reported. Tracked separately from the value because an admin
+	 * switching mana off drops the maximum to zero without moving the current amount,
+	 * and a client told only about the value would leave the old pool on screen.
+	 */
+	private float syncedManaMax = -1.0F;
 
 	public CombatState state() {
 		return this.state;
@@ -155,16 +219,22 @@ public final class CombatController {
 		}
 
 		syncPermanentModifiers(entity, profile);
+
+		// Before the stamina block, because it is what sets the scaling that block
+		// spends through.
+		syncStatEffects(entity);
 		this.stagger.tick(profile.stagger().resetTicks());
 
 		// Skipped entirely for an actor without stamina. Every stamina gate short
 		// circuits on the same usesStamina() check, so its pool is never read either.
 		if (profile.usesStamina()) {
-			this.stamina.tick(profile.stamina());
+			this.stamina.tick(profile.stamina(), this.staminaScaling.regenMultiplier());
 			drainSprint(entity, profile);
 			drainGuard(entity, profile);
 			syncStamina(entity, profile);
 		}
+
+		tickMana(entity);
 
 		// Runs whether or not the actor pays stamina: this is the dead man's switch on
 		// the hold, not a cost. Counted down before the state timer so a hold that
@@ -202,6 +272,10 @@ public final class CombatController {
 		return this.stamina;
 	}
 
+	public ManaPool mana() {
+		return this.mana;
+	}
+
 	/**
 	 * Begins an attack if the actor is free to act.
 	 *
@@ -234,7 +308,8 @@ public final class CombatController {
 		}
 
 		return !profile.usesStamina()
-				|| this.stamina.has(profile.stamina(), profile.stamina().attackCost());
+				|| this.stamina.has(profile.stamina(),
+						this.staminaScaling.cost(profile.stamina().attackCost()));
 	}
 
 	/**
@@ -324,7 +399,8 @@ public final class CombatController {
 		}
 
 		return !profile.usesStamina()
-				|| this.stamina.has(profile.stamina(), profile.dodge().cost());
+				|| this.stamina.has(profile.stamina(),
+						this.staminaScaling.cost(profile.dodge().cost()));
 	}
 
 	/**
@@ -463,6 +539,55 @@ public final class CombatController {
 	 * The actor has let go. Drops into the tail immediately rather than waiting for
 	 * the current lease to expire, so releasing feels like releasing.
 	 */
+	/**
+	 * Drops a raised guard so an attack can come straight out of it.
+	 *
+	 * <p>Without this a guard is a dead end. {@link #canStartAttack} requires NEUTRAL
+	 * and GUARDING is not neutral, so a swing while holding block was refused outright
+	 * — and since holding block is exactly what a player does while under pressure,
+	 * "block the hit, then punish" was impossible. Letting go first works, but costs
+	 * the guard's endlag on top of the reaction, by which point the opening has gone.
+	 *
+	 * <p>The trade is still paid: the guard is down from this moment, so the punish is
+	 * thrown with no defence up, and the attack's own stamina cost and endlag apply as
+	 * normal. What is skipped is only the endlag for <em>lowering</em> the guard, which
+	 * exists to stop a guard flickering on and off — not to tax committing to an
+	 * attack.
+	 *
+	 * <p>Deliberately does not cancel {@link CombatState#GUARD_RECOVERY}. Once the
+	 * guard is already down that endlag is being served, and letting an attack skip it
+	 * would make dropping a guard free after all.
+	 *
+	 * <p>Refuses when the swing could not happen anyway — staggered, or too little
+	 * stamina to pay for it. Otherwise a click that was never going to connect would
+	 * still cost the player their guard, which reads as the guard dropping at random.
+	 *
+	 * @return true when a guard was actually dropped
+	 */
+	public boolean cancelGuardForAttack(LivingEntity entity, CombatProfile profile) {
+		if (this.state != CombatState.GUARD_RAISE && this.state != CombatState.GUARDING) {
+			return false;
+		}
+
+		if (this.staggerTicks > 0) {
+			return false;
+		}
+
+		if (profile.usesStamina() && !this.stamina.has(profile.stamina(),
+				this.staminaScaling.cost(profile.stamina().attackCost()))) {
+			return false;
+		}
+
+		dropGuardHold();
+
+		// Straight to neutral rather than through releaseGuard, which would enter
+		// GUARD_RECOVERY and leave the attack refused for exactly the reason above.
+		// This also clears the guard's movement penalty, since returnToNeutral
+		// re-syncs it.
+		returnToNeutral(entity);
+		return true;
+	}
+
 	public void releaseGuard(LivingEntity entity, CombatProfile profile) {
 		dropGuardHold();
 
@@ -559,7 +684,7 @@ public final class CombatController {
 			cost *= profile.block().shieldCostScale();
 		}
 
-		this.stamina.drain(profile.stamina(), cost);
+		this.stamina.drain(profile.stamina(), this.staminaScaling.cost(cost));
 		reportStaminaSoon();
 
 		if (this.stamina.exhausted()) {
@@ -663,7 +788,7 @@ public final class CombatController {
 			return;
 		}
 
-		this.stamina.drain(profile.stamina(), cost);
+		this.stamina.drain(profile.stamina(), this.staminaScaling.cost(cost));
 
 		if (this.stamina.exhausted()) {
 			breakGuard(entity, profile);
@@ -747,7 +872,7 @@ public final class CombatController {
 			return;
 		}
 
-		this.stamina.spend(profile.stamina(), profile.dodge().cost());
+		this.stamina.spend(profile.stamina(), this.staminaScaling.cost(profile.dodge().cost()));
 		reportStaminaSoon();
 	}
 
@@ -756,7 +881,7 @@ public final class CombatController {
 			return;
 		}
 
-		this.stamina.spend(profile.stamina(), profile.stamina().attackCost());
+		this.stamina.spend(profile.stamina(), this.staminaScaling.cost(profile.stamina().attackCost()));
 		reportStaminaSoon();
 	}
 
@@ -769,11 +894,14 @@ public final class CombatController {
 	 *         gate is what actually stops those.
 	 */
 	public boolean spendJump(CombatProfile profile) {
+		// Tested before scaling: a configured zero means "jumping is free for this
+		// actor", and no multiplier should be able to resurrect a cost from it.
 		if (!profile.usesStamina() || profile.stamina().jumpCost() <= 0) {
 			return true;
 		}
 
-		boolean paid = this.stamina.spend(profile.stamina(), profile.stamina().jumpCost());
+		boolean paid = this.stamina.spend(profile.stamina(),
+				this.staminaScaling.cost(profile.stamina().jumpCost()));
 		reportStaminaSoon();
 		return paid;
 	}
@@ -795,7 +923,7 @@ public final class CombatController {
 			return;
 		}
 
-		this.stamina.drain(profile.stamina(), cost);
+		this.stamina.drain(profile.stamina(), this.staminaScaling.cost(cost));
 
 		if (this.stamina.exhausted()) {
 			// Syncs to the owner's client through entity data. The client refuses to
@@ -830,28 +958,103 @@ public final class CombatController {
 			this.staminaSyncDelay--;
 		}
 
-		if (!staminaSyncDue()) {
+		if (!staminaSyncDue(profile)) {
 			return;
 		}
 
 		this.syncedStamina = this.stamina.current();
+		this.syncedStaminaMax = this.stamina.max(profile.stamina());
 		this.syncedExhausted = this.stamina.exhausted();
 		this.staminaSyncDelay = CombatConstants.STAMINA_SYNC_INTERVAL_TICKS;
 
+		// Two of these are scaled and two are not, which is the whole subtlety of this
+		// packet. regenPerSecond and jumpCost are what the client *decides* from — it
+		// extrapolates the bar from one and refuses an unaffordable jump from the other
+		// — so an unscaled value would have the client disagreeing with the server, and
+		// in the jump's case handing out a jump the server then charges full price for.
+		//
+		// The maximum now moves too, and has to be the pool's own answer rather than the
+		// configured figure: attribute points raise the ceiling, and a client told the
+		// unbought maximum would draw a bar that reads full while the server was still
+		// filling it.
 		ServerPlayNetworking.send(player, new StaminaPayload(
 				this.stamina.current(),
-				profile.stamina().maxStamina(),
-				profile.stamina().regenPerSecond(),
+				this.stamina.max(profile.stamina()),
+				Math.round(profile.stamina().regenPerSecond() * this.staminaScaling.regenMultiplier()),
 				this.stamina.regenDelay(),
-				profile.stamina().jumpCost(),
+				Math.round(this.staminaScaling.cost(profile.stamina().jumpCost())),
 				this.stamina.exhausted()));
 	}
 
-	private boolean staminaSyncDue() {
+	/**
+	 * Advances and reports the mana pool.
+	 *
+	 * <p>Players only: mana is a character resource, and a mob has neither a sheet to
+	 * show it on nor anything to spend it on.
+	 */
+	private void tickMana(LivingEntity entity) {
+		if (!(entity instanceof ServerPlayer player)) {
+			return;
+		}
+
+		ManaSettings settings = StatTuning.current().mana();
+
+		if (settings.enabled()) {
+			this.mana.tick(settings);
+		}
+
+		// Reported even when mana is switched off, so doing so actually clears the
+		// character sheet's row instead of freezing the last value there.
+		syncMana(player, settings);
+	}
+
+	/**
+	 * Tells the owner's client about its mana on the same cadence as stamina.
+	 *
+	 * <p>With nothing yet able to spend mana this settles at one packet per player
+	 * per life, which is also why a fault here would be invisible everywhere except
+	 * the character sheet.
+	 */
+	private void syncMana(ServerPlayer player, ManaSettings settings) {
+		if (this.manaSyncDelay > 0) {
+			this.manaSyncDelay--;
+			return;
+		}
+
+		// The pool's own ceiling, not the configured one, and it matters twice over:
+		// buying a point moves the maximum without moving the current value, so a
+		// comparison against the config figure would decide nothing had changed and
+		// never send the packet that tells the sheet about the purchase.
+		float max = this.mana.max(settings);
+
+		if (max == this.syncedManaMax
+				&& Math.abs(this.mana.current() - this.syncedMana) < CombatConstants.STAMINA_SYNC_EPSILON) {
+			return;
+		}
+
+		this.syncedMana = this.mana.current();
+		this.syncedManaMax = max;
+		this.manaSyncDelay = CombatConstants.STAMINA_SYNC_INTERVAL_TICKS;
+
+		ServerPlayNetworking.send(player, new ManaPayload(
+				this.mana.current(),
+				max,
+				settings.regenPerSecond(),
+				this.mana.regenDelay()));
+	}
+
+	private boolean staminaSyncDue(CombatProfile profile) {
 		// A change of state is worth a packet immediately: it changes what the bar
 		// means rather than only how full it is, and the client must not keep telling
 		// the player they may act when the server has stopped them.
 		if (this.stamina.exhausted() != this.syncedExhausted) {
+			return true;
+		}
+
+		// So is a change of ceiling. Buying stamina does not move the current value, so
+		// without this the bar would keep its old length until regen happened to nudge
+		// the value — and never at all for an actor whose regen is switched off.
+		if (this.stamina.max(profile.stamina()) != this.syncedStaminaMax) {
 			return true;
 		}
 
@@ -1147,6 +1350,61 @@ public final class CombatController {
 
 		this.appliedProfile = null;
 		syncPermanentModifiers(entity, profile);
+
+		// Cleared too, so a respawn or an admin's config change lands on the spot
+		// rather than on whatever tick a stat next happens to move.
+		this.appliedStatSettings = null;
+		this.appliedConstitution = Double.NaN;
+		this.appliedAgility = Double.NaN;
+		this.appliedPoolPoints = null;
+		syncStatEffects(entity);
+	}
+
+	/**
+	 * Expresses this actor's stats as attribute modifiers, and works out what they do
+	 * to its stamina.
+	 *
+	 * <p>Players only — nothing else carries the stat attributes, so for a mob this is
+	 * a type check and a return, and its scaling stays neutral.
+	 *
+	 * <p>Reads the stat values every tick and re-applies only when something moved.
+	 * That is two cached attribute reads and three comparisons in the steady state,
+	 * and it means a stat gained from gear takes effect the tick it is equipped.
+	 */
+	private void syncStatEffects(LivingEntity entity) {
+		if (!(entity instanceof ServerPlayer player)) {
+			return;
+		}
+
+		StatSettings settings = StatTuning.current();
+		double constitution = StatEffects.statOf(entity, GrandCraftAttributes.CONSTITUTION);
+		double agility = StatEffects.statOf(entity, GrandCraftAttributes.AGILITY);
+		PoolBlock spentPools = EssenceAwards.progressOf(player).spentPools();
+
+		if (settings == this.appliedStatSettings
+				&& constitution == this.appliedConstitution
+				&& agility == this.appliedAgility
+				&& spentPools.equals(this.appliedPoolPoints)) {
+			return;
+		}
+
+		this.appliedStatSettings = settings;
+		this.appliedConstitution = constitution;
+		this.appliedAgility = agility;
+		this.appliedPoolPoints = spentPools;
+		this.staminaScaling = StaminaScaling.of(entity, settings);
+
+		this.stamina.setBonusMax(settings.poolStaminaBonus(spentPools));
+
+		// Gated on mana being switched on at all. A configured maximum of zero is the
+		// feature's off switch, and a bought ceiling must not be a way round it — with
+		// mana off the pool is not ticked, so a non-zero ceiling would leave the sheet
+		// showing a pool that could never fill.
+		this.mana.setBonusMax(settings.mana().enabled()
+				? settings.poolManaBonus(spentPools)
+				: 0);
+
+		StatEffects.apply(entity, settings, spentPools);
 	}
 
 	private static void add(LivingEntity entity, Holder<Attribute> attribute, Identifier id,

@@ -10,11 +10,17 @@ package com.hrtq.grandcraft.combat;
  */
 public final class CombatConstants {
 	/**
-	 * The damage window. Structural rather than a matter of taste: an attack with no
-	 * active window could never connect, and a long one only widens the slot in
-	 * which a target who has stepped away can wander back in.
+	 * The default damage window, now only a starting value — the window itself is a
+	 * per-actor setting on {@link ActorSettings}.
+	 *
+	 * <p>It was a constant on the grounds that a long window "only widens the slot in
+	 * which a target who has stepped away can wander back in". That turned out to be
+	 * the wrong way round for a slow, heavily telegraphed attacker: it commits at the
+	 * start of its wind-up, and two ticks later the target has walked out of reach, so
+	 * the mob whiffs every swing. Widening the window is exactly how such a mob is
+	 * made to connect.
 	 */
-	public static final int ACTIVE_TICKS = 2;
+	public static final int DEFAULT_ACTIVE_TICKS = 2;
 
 	/** Movement lost on a first stagger, and on the weaker follow-up. */
 	public static final double STAGGER_SLOW = 0.20;

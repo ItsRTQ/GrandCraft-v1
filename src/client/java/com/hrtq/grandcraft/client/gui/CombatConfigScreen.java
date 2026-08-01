@@ -55,7 +55,7 @@ public class CombatConfigScreen extends Screen {
 
 	/** Settings that always have a tooltip; the rest read for themselves. */
 	private static final Set<String> EXPLAINED = Set.of(
-			"startup", "recovery", "stagger", "health", "defence",
+			"startup", "active", "recovery", "stagger", "health", "defence",
 			"max_stamina", "regen", "regen_delay", "attack_cost", "sprint_cost", "jump_cost",
 			"dodge_invulnerable", "dodge_recovery", "dodge_speed", "dodge_cost",
 			"block_raise", "block_recovery", "block_break", "block_cost",
@@ -109,6 +109,7 @@ public class CombatConfigScreen extends Screen {
 	private Section sectionFor;
 
 	private TunableField startup;
+	private TunableField active;
 	private TunableField recovery;
 	private TunableField stagger;
 	private TunableField healthMin;
@@ -212,11 +213,15 @@ public class CombatConfigScreen extends Screen {
 		if (actor.usesMeleeGoal()) {
 			this.startup = ticks(seed.startupTicks(), ActorSettings.MAX_PHASE_TICKS);
 			row = addValue(grid, row, "startup", false, this.startup);
+
+			this.active = ticks(seed.activeTicks(), ActorSettings.MAX_PHASE_TICKS);
+			row = addValue(grid, row, "active", false, this.active);
 		} else {
-			// Nothing to delay: this actor's damage lands on vanilla timing. Cleared
-			// rather than left stale, because readFields() uses null to mean "keep
-			// the stored value".
+			// Nothing to delay: this actor's damage lands on vanilla timing, so it has
+			// neither a wind-up nor a window of ours. Cleared rather than left stale,
+			// because readFields() uses null to mean "keep the stored value".
 			this.startup = null;
+			this.active = null;
 		}
 
 		this.recovery = ticks(seed.recoveryTicks(), ActorSettings.MAX_PHASE_TICKS);
@@ -558,6 +563,7 @@ public class CombatConfigScreen extends Screen {
 		if (this.sectionFor == Section.STAMINA) {
 			return new ActorSettings(
 					stored.startupTicks(),
+					stored.activeTicks(),
 					stored.recoveryTicks(),
 					stored.staggerTicks(),
 					stored.health(),
@@ -578,6 +584,7 @@ public class CombatConfigScreen extends Screen {
 		if (this.sectionFor == Section.DODGE) {
 			return new ActorSettings(
 					stored.startupTicks(),
+					stored.activeTicks(),
 					stored.recoveryTicks(),
 					stored.staggerTicks(),
 					stored.health(),
@@ -596,6 +603,7 @@ public class CombatConfigScreen extends Screen {
 		if (this.sectionFor == Section.BLOCK) {
 			return new ActorSettings(
 					stored.startupTicks(),
+					stored.activeTicks(),
 					stored.recoveryTicks(),
 					stored.staggerTicks(),
 					stored.health(),
@@ -617,6 +625,7 @@ public class CombatConfigScreen extends Screen {
 
 		return new ActorSettings(
 				this.startup == null ? stored.startupTicks() : this.startup.intValue(),
+				this.active == null ? stored.activeTicks() : this.active.intValue(),
 				this.recovery.intValue(),
 				this.stagger.intValue(),
 				percentBand(this.healthMin, this.healthMax),

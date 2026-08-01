@@ -12,6 +12,18 @@ repositories {
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
 	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
 	// for more information about repositories.
+
+	// Modrinth's maven, used for GeckoLib. Its own Cloudsmith repository was tried
+	// first and does not carry the 26.2 artifacts under any coordinate that resolves.
+	maven {
+		name = 'Modrinth'
+		url = 'https://api.modrinth.com/maven'
+		// Scoped so this repository is never consulted for anything else, which keeps
+		// dependency resolution fast and predictable.
+		content {
+			includeGroup('maven.modrinth')
+		}
+	}
 }
 
 loom {
@@ -38,6 +50,14 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Plain implementation, not modImplementation. Loom 1.17 does not create the
+	// mod* configurations unless a build opts in with createRemapConfigurations(...),
+	// and this one does not — which is why fabric-api, itself a mod, is declared the
+	// same way just above. Follow that convention rather than reintroducing the split.
+	//
+	// The version is a Modrinth version ID, not a version number. See gradle.properties.
+	implementation "maven.modrinth:geckolib:${project.geckolib_version}"
 }
 
 processResources {

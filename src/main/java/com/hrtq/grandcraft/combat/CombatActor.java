@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.combat;
 
+import com.hrtq.grandcraft.entity.ZombieHumanEntity;
 import com.mojang.serialization.Codec;
 import java.util.EnumSet;
 import java.util.Set;
@@ -30,7 +31,7 @@ public enum CombatActor {
 	PLAYER("player", Player.class,
 			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK),
 			new ActorSettings(
-					0, 3, 4,
+					0, CombatConstants.DEFAULT_ACTIVE_TICKS, 3, 4,
 					StatRange.of(1.0),
 					StatRange.of(1.0),
 					StatRange.of(1.0),
@@ -81,23 +82,62 @@ public enum CombatActor {
 					new BlockSettings(3, 3, 10, 250, 2, 135, 40, 60))),
 
 	/**
-	 * Covers the whole zombie family — husk, drowned, zombie villager — since they
-	 * share Zombie's melee behaviour.
+	 * The GeckoLib-drawn zombie-human.
+	 *
+	 * <p>It holds {@link CombatVerb#PHASED_MELEE} only because
+	 * {@link CombatPhaseAnimations} exists: the animation layer poses the vanilla rig,
+	 * which a GeckoLib model never reaches, so until that bridge was built this mob
+	 * would have wound up for a quarter of a second showing nothing. Phased melee is
+	 * only honest when the wind-up can be seen.
+	 *
+	 * <p>Values match ZOMBIE so it reads as a reskin rather than a new opponent; what
+	 * is being tested here is the rendering and animation path, not the tuning.
 	 */
-	ZOMBIE("zombie", Zombie.class,
-			EnumSet.of(CombatVerb.PHASED_MELEE, CombatVerb.RANDOM_STATS, CombatVerb.STAMINA),
+	ZOMBIE_HUMAN("zombie_human", ZombieHumanEntity.class,
+			EnumSet.of(CombatVerb.PHASED_MELEE, CombatVerb.RANDOM_STATS),
 			new ActorSettings(
-					5, 10, 4,
+					// A wide window to match the long wind-up. The animation is a
+					// deliberate, readable raise, and a two tick window meant the target
+					// had always stepped out of reach by the time it opened — the mob
+					// telegraphed, committed, and whiffed, forever.
+					10, 6, 10, 4,
 					new StatRange(0.8, 1.4),
 					new StatRange(0.8, 1.4),
 					new StatRange(0.9, 1.2),
 					new StatRange(0.0, 6.0),
-					// About six swings before it has to break off. That pause is the
-					// point: it is an opening the player can read and punish, which is
-					// what a mob needs to be threatening rather than merely high-damage.
-					// Sprint and jump cost nothing, so pathfinding cannot exhaust a mob
-					// that never chose to spend.
-					new StaminaSettings(100, 12, 12, 15, 0, 0),
+					// Mobs have no stamina, deliberately. A pool gave them a second,
+					// invisible way to fail: one that whiffed a few swings ran itself
+					// out and then stood doing nothing, which is indistinguishable from
+					// a broken attack and is how it got reported. A player can see their
+					// own bar and read the pause; nobody can see a mob's. A mob's pacing
+					// is its phase timings, and that is enough. Zeroed rather than only
+					// un-verbed so the config screen tells the truth, as dodge and block
+					// already do.
+					new StaminaSettings(0, 0, 0, 0, 0, 0),
+					new DodgeSettings(0, 0, 0, 0),
+					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0))),
+
+	/**
+	 * Covers the whole zombie family — husk, drowned, zombie villager — since they
+	 * share Zombie's melee behaviour.
+	 */
+	ZOMBIE("zombie", Zombie.class,
+			EnumSet.of(CombatVerb.PHASED_MELEE, CombatVerb.RANDOM_STATS),
+			new ActorSettings(
+					5, CombatConstants.DEFAULT_ACTIVE_TICKS, 10, 4,
+					new StatRange(0.8, 1.4),
+					new StatRange(0.8, 1.4),
+					new StatRange(0.9, 1.2),
+					new StatRange(0.0, 6.0),
+					// Mobs have no stamina, deliberately. A pool gave them a second,
+					// invisible way to fail: one that whiffed a few swings ran itself
+					// out and then stood doing nothing, which is indistinguishable from
+					// a broken attack and is how it got reported. A player can see their
+					// own bar and read the pause; nobody can see a mob's. A mob's pacing
+					// is its phase timings, and that is enough. Zeroed rather than only
+					// un-verbed so the config screen tells the truth, as dodge and block
+					// already do.
+					new StaminaSettings(0, 0, 0, 0, 0, 0),
 					// No dodge: the zombie lacks the verb, and would also need a goal
 					// to decide when to use one. Zeroed rather than left at the
 					// player's numbers so the config screen shows the truth.

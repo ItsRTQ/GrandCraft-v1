@@ -23,6 +23,7 @@ import net.minecraft.network.codec.StreamCodec;
  */
 public record ActorSettings(
 		int startupTicks,
+		int activeTicks,
 		int recoveryTicks,
 		int staggerTicks,
 		StatRange health,
@@ -36,6 +37,18 @@ public record ActorSettings(
 	/** Bounds shared by the config fields and the server-side clamp. */
 	public static final int MAX_PHASE_TICKS = 40;
 	public static final int MAX_STAGGER_TICKS = 20;
+
+	/**
+	 * An attack needs at least one tick on which damage can land.
+	 *
+	 * <p>The window is what decides whether a telegraphed attack can actually
+	 * connect. A mob commits at the start of its wind-up, and by the time the window
+	 * opens the target may have stepped out of a reach of about 1.4 blocks — so a
+	 * long wind-up wants a wider window to match, or the telegraph defeats itself and
+	 * the mob whiffs forever. That is why this is per actor rather than one constant
+	 * for everything.
+	 */
+	public static final int MIN_ACTIVE_TICKS = 1;
 
 	/**
 	 * Vanilla's {@code MAX_HEALTH} attribute stops at 1024, so 20x clears anything
@@ -68,6 +81,8 @@ public record ActorSettings(
 		return RecordCodecBuilder.create(instance -> instance.group(
 				Codec.INT.optionalFieldOf("startup_ticks", fallback.startupTicks())
 						.forGetter(ActorSettings::startupTicks),
+				Codec.INT.optionalFieldOf("active_ticks", fallback.activeTicks())
+						.forGetter(ActorSettings::activeTicks),
 				Codec.INT.optionalFieldOf("recovery_ticks", fallback.recoveryTicks())
 						.forGetter(ActorSettings::recoveryTicks),
 				Codec.INT.optionalFieldOf("stagger_ticks", fallback.staggerTicks())
@@ -92,6 +107,7 @@ public record ActorSettings(
 	public static final StreamCodec<ByteBuf, ActorSettings> STREAM_CODEC = StreamCodec.of(
 			(buf, settings) -> {
 				buf.writeInt(settings.startupTicks());
+				buf.writeInt(settings.activeTicks());
 				buf.writeInt(settings.recoveryTicks());
 				buf.writeInt(settings.staggerTicks());
 				StatRange.STREAM_CODEC.encode(buf, settings.health());
@@ -103,7 +119,7 @@ public record ActorSettings(
 				BlockSettings.STREAM_CODEC.encode(buf, settings.block());
 			},
 			buf -> new ActorSettings(
-					buf.readInt(), buf.readInt(), buf.readInt(),
+					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(),
 					StatRange.STREAM_CODEC.decode(buf),
 					StatRange.STREAM_CODEC.decode(buf),
 					StatRange.STREAM_CODEC.decode(buf),
@@ -120,6 +136,9 @@ public record ActorSettings(
 	public ActorSettings clamped() {
 		return new ActorSettings(
 				clamp(this.startupTicks, 0, MAX_PHASE_TICKS),
+				// Floor of one, not zero: an attack with no active window has no tick on
+				// which damage can land, so it could never connect however well aimed.
+				clamp(this.activeTicks, MIN_ACTIVE_TICKS, MAX_PHASE_TICKS),
 				clamp(this.recoveryTicks, 0, MAX_PHASE_TICKS),
 				clamp(this.staggerTicks, 0, MAX_STAGGER_TICKS),
 				this.health.clamped(0.0, MAX_HEALTH_MULTIPLIER),

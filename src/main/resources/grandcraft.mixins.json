@@ -9,7 +9,8 @@
 		"LivingEntityJumpMixin",
 		"LivingEntityMixin",
 		"MeleeAttackGoalMixin",
-		"MobMeleeRangeMixin"
+		"MobMeleeRangeMixin",
+		"PlayerAttributesMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

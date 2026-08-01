@@ -4,8 +4,14 @@ import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.GrandCraftCombat;
 import com.hrtq.grandcraft.command.GrandCraftCommands;
 import com.hrtq.grandcraft.config.GameConfigFile;
+import com.hrtq.grandcraft.entity.GrandCraftEntities;
 import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import com.hrtq.grandcraft.progression.GrandCraftProgression;
+import com.hrtq.grandcraft.progression.LevelConfigFile;
+import com.hrtq.grandcraft.stats.GrandCraftAttributes;
+import com.hrtq.grandcraft.stats.GrandCraftStats;
+import com.hrtq.grandcraft.stats.StatConfigFile;
 import net.fabricmc.api.ModInitializer;
 
 import net.minecraft.resources.Identifier;
@@ -29,14 +35,24 @@ public class GrandCraft implements ModInitializer {
 
 		LOGGER.info("Hello Fabric world!");
 
+		// First: Player.createAttributes is built from a static initialiser whose
+		// ordering against this method is not guaranteed, and the stat attributes have
+		// to exist by the time it runs.
+		GrandCraftAttributes.register();
+
+		GrandCraftEntities.register();
 		GrandCraftAttachments.register();
 		GrandCraftNetworking.register();
 		GrandCraftCommands.register();
 		GrandCraftCombat.register();
+		GrandCraftStats.register();
+		GrandCraftProgression.register();
 
 		// After registration so the systems are in place before values land.
 		CombatConfigFile.load();
 		GameConfigFile.load();
+		StatConfigFile.load();
+		LevelConfigFile.load();
 	}
 
 	public static Identifier id(String path) {

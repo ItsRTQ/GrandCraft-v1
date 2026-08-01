@@ -111,6 +111,24 @@ public final class ClientCombatPhases {
 	}
 
 	/** How far through its current phase this entity is, from 0 to 1. */
+	/**
+	 * How long the entity's current phase lasts in total, in ticks, or 0 when it is
+	 * in none.
+	 *
+	 * <p>Always the whole phase even for an actor picked up mid-swing: {@link #accept}
+	 * backdates the start by the elapsed ticks, so the stored span is the configured
+	 * length rather than whatever remained when this client first heard about it.
+	 */
+	public static float phaseTicks(int entityId, long nowMillis) {
+		Phase phase = phases.get(entityId);
+
+		if (phase == null || nowMillis >= phase.endMillis()) {
+			return 0.0F;
+		}
+
+		return (phase.endMillis() - phase.startMillis()) / 50.0F;
+	}
+
 	public static float progressOf(int entityId, long nowMillis) {
 		Phase phase = phases.get(entityId);
 

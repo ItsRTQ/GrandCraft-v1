@@ -36,8 +36,45 @@ public final class StaminaPool {
 
 	private boolean exhausted;
 
+	/**
+	 * Extra ceiling this actor has bought with attribute points.
+	 *
+	 * <p>Held here rather than passed to each method, and rather than folded into a
+	 * per-player copy of {@link StaminaSettings}. A per-player settings record is what
+	 * {@code StaminaScaling} exists to avoid, for a reason that does not apply to this
+	 * one — an absolute bonus does not round away the way a percentage does — but the
+	 * allocation per tick would be real. Passing it into all five settings-taking
+	 * methods would work and is exactly the sort of thing one call site forgets, which
+	 * would leave the ceiling and the exhaustion threshold disagreeing.
+	 *
+	 * <p>Set by the controller when the points change; zero for anything without them.
+	 */
+	private int bonusMax;
+
 	public float current() {
 		return this.current;
+	}
+
+	/**
+	 * Sets the bought ceiling. Idempotent, and safe to call every tick.
+	 *
+	 * <p>Lowering it does not take stamina away on the spot — {@link #fill} trims the
+	 * pool to the new ceiling on its next pass, which is the same treatment a config
+	 * change already gets.
+	 */
+	public void setBonusMax(int bonus) {
+		this.bonusMax = Math.max(bonus, 0);
+	}
+
+	/**
+	 * This actor's real ceiling: what the config says, plus what it bought.
+	 *
+	 * <p>Every read of the maximum goes through here — regen, the exhaustion threshold
+	 * and the fill trim alike — so there is no way for them to disagree about how big
+	 * the pool is.
+	 */
+	public float max(StaminaSettings settings) {
+		return settings.maxStamina() + this.bonusMax;
 	}
 
 	public boolean exhausted() {
@@ -53,13 +90,20 @@ public final class StaminaPool {
 	}
 
 	/** Whether this actor could pay for an action costing {@code cost} right now. */
-	public boolean has(StaminaSettings settings, int cost) {
+	public boolean has(StaminaSettings settings, float cost) {
 		fill(settings);
 		return !this.exhausted && this.current >= cost;
 	}
 
-	/** Advances regen. Called once per tick, and only for actors that use stamina. */
-	public void tick(StaminaSettings settings) {
+	/**
+	 * Advances regen. Called once per tick, and only for actors that use stamina.
+	 *
+	 * <p>{@code regenMultiplier} is whatever the actor's stats do to the configured
+	 * rate — 1.0 for anything without stats. It arrives as a bare number rather than
+	 * as adjusted settings so this pool stays ignorant of where it came from, in
+	 * keeping with it holding no settings of its own.
+	 */
+	public void tick(StaminaSettings settings, float regenMultiplier) {
 		fill(settings);
 
 		if (this.regenDelay > 0) {
@@ -67,10 +111,10 @@ public final class StaminaPool {
 			return;
 		}
 
-		float max = settings.maxStamina();
+		float max = max(settings);
 
 		if (this.current < max) {
-			this.current = Math.min(max, this.current + settings.regenPerTick());
+			this.current = Math.min(max, this.current + settings.regenPerTick() * regenMultiplier);
 		}
 
 		// Checked outside the branch above: a pool already at or above the threshold —
@@ -87,12 +131,12 @@ public final class StaminaPool {
 	 * @return false when the actor could not afford it, in which case nothing is
 	 *         deducted and the caller must suppress the action.
 	 */
-	public boolean spend(StaminaSettings settings, int cost) {
+	public boolean spend(StaminaSettings settings, float cost) {
 		if (!has(settings, cost)) {
 			return false;
 		}
 
-		this.current -= cost;
+		this.current = Math.max(0.0F, this.current - cost);
 		afterSpending(settings);
 		return true;
 	}
@@ -120,7 +164,7 @@ public final class StaminaPool {
 	 * what an actor's maximum is.
 	 */
 	private void fill(StaminaSettings settings) {
-		float max = settings.maxStamina();
+		float max = max(settings);
 
 		if (!this.initialised) {
 			this.current = max;
