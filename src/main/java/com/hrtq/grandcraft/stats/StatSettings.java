@@ -35,7 +35,10 @@ public record StatSettings(
 		int manaRegenDelayTicks,
 		int healthPerPoolPoint,
 		int staminaPerPoolPoint,
-		int manaPerPoolPoint) {
+		int manaPerPoolPoint,
+		int spellDamagePerArcane,
+		int spellCooldownPerArcane,
+		int manaRegenMinArcane) {
 
 	/**
 	 * The three pool figures are deliberately chunky where the per-stat ones are
@@ -46,11 +49,27 @@ public record StatSettings(
 	 *
 	 * <p>Health is in half-hearts, so 2 is one heart per point — three points at the
 	 * first milestone is three hearts. Stamina at 10 is most of an extra swing per
-	 * point against an attack cost of 12. Mana matches stamina; nothing spends it yet,
-	 * so that figure is a placeholder the magic layer should revisit.
+	 * point against an attack cost of 12, and mana matches it.
+	 *
+	 * <p>The two Arcane figures spread the classes without shutting any of them out,
+	 * and they compound on purpose. Against a 2.00 gust on a 16 tick cooldown, a
+	 * Sorcerer (Arcane 16) throws 2.6 every 13 ticks and a Warrior (6) throws 1.6
+	 * every 18 — a little over twice the output, from two modest per-point rates
+	 * rather than one severe one. Neither locks the staff away from a character who
+	 * never invested in Arcane; it is simply worth less in their hands.
+	 *
+	 * <p>Mana recovers slowly and only for a character who invested in Arcane. Both
+	 * halves are the point: a free projectile is always worth carrying, so without a
+	 * real cost every class would keep a staff in a spare slot and magic would stop
+	 * being a caster's identity. Natural regeneration is meant to be the floor that
+	 * potions, enchantments, gear and passives build on rather than the whole supply.
+	 *
+	 * <p>Of the shipped classes only the Sorcerer (Arcane 16) clears the threshold on
+	 * day one. A Cleric starts at 13 and reaches it after two stat points — deliberate:
+	 * recovery is something a character grows into, not something a class is handed.
 	 */
 	public static final StatSettings DEFAULT =
-			new StatSettings(50, 50, 3, 2, 100, 5, 20, 2, 10, 10);
+			new StatSettings(50, 50, 3, 2, 100, 2, 20, 2, 10, 10, 5, 3, 15);
 
 	/**
 	 * Bounds shared by the config fields and the server-side clamp.
@@ -91,6 +110,35 @@ public record StatSettings(
 	public static final double MIN_REGEN_MULTIPLIER = 0.25;
 	public static final double MAX_REGEN_MULTIPLIER = 4.00;
 
+	/**
+	 * Bounds on what Arcane does to spell damage.
+	 *
+	 * <p>The floor is above zero deliberately: a character far below neutral Arcane
+	 * should cast feebly, not cast for nothing. A spell that reliably deals zero is
+	 * indistinguishable from a spell that is broken, and it would be reported as one.
+	 */
+	public static final double MIN_SPELL_DAMAGE_MULTIPLIER = 0.25;
+	public static final double MAX_SPELL_DAMAGE_MULTIPLIER = 3.00;
+
+	/**
+	 * Bounds on what Arcane does to a spell's cooldown. Lower is faster.
+	 *
+	 * <p>The floor is not the real safety net — {@link ArcaneScaling} imposes an
+	 * absolute minimum in ticks as well, because a cooldown short enough to fall
+	 * under the client's own four-tick use repeat stops being a cooldown at all.
+	 */
+	public static final double MIN_SPELL_COOLDOWN_MULTIPLIER = 0.25;
+	public static final double MAX_SPELL_COOLDOWN_MULTIPLIER = 2.00;
+
+	/**
+	 * Ceiling on the Arcane a character must reach before mana recovers at all.
+	 *
+	 * <p>Well above any starting spread, so an admin can push recovery out of reach
+	 * entirely, and well below {@code StatConstants.MAX} so the field cannot be set to
+	 * a value no character could ever meet by accident.
+	 */
+	public static final int MAX_MANA_REGEN_MIN_ARCANE = 100;
+
 	/** Extra armour points from Constitution. Negative below neutral. */
 	public double armourBonus(double constitution) {
 		return points(constitution) * this.armourPerConstitution / 100.0;
@@ -111,6 +159,50 @@ public record StatSettings(
 	public float staminaCostMultiplier(double agility) {
 		double scale = 1.0 - points(agility) * this.staminaCostPerAgility / 100.0;
 		return (float) clamp(scale, MIN_COST_MULTIPLIER, MAX_COST_MULTIPLIER);
+	}
+
+	/**
+	 * What Arcane does to spell damage. 1.0 is unchanged; higher hits harder.
+	 *
+	 * <p>Clamped on the finished multiplier rather than on the per-point rate, for the
+	 * same reason the stamina ones are: a rate that looks reasonable becomes absurd
+	 * twenty points from neutral.
+	 */
+	public float spellDamageMultiplier(double arcane) {
+		double scale = 1.0 + points(arcane) * this.spellDamagePerArcane / 100.0;
+		return (float) clamp(scale, MIN_SPELL_DAMAGE_MULTIPLIER, MAX_SPELL_DAMAGE_MULTIPLIER);
+	}
+
+	/**
+	 * What Arcane does to how often a spell can be cast. 1.0 is unchanged; lower is
+	 * faster.
+	 *
+	 * <p>Subtracts like the Agility cost multiplier rather than adding like the damage
+	 * one, because for a cooldown "better" means "smaller".
+	 */
+	public float spellCooldownMultiplier(double arcane) {
+		double scale = 1.0 - points(arcane) * this.spellCooldownPerArcane / 100.0;
+		return (float) clamp(scale, MIN_SPELL_COOLDOWN_MULTIPLIER, MAX_SPELL_COOLDOWN_MULTIPLIER);
+	}
+
+	/**
+	 * Whether this character's mana recovers on its own, as a multiplier on the
+	 * configured rate. 1.0 is the full rate; 0.0 is none at all.
+	 *
+	 * <p>A hard gate today rather than a curve, because the design question it answers
+	 * is binary: a free projectile is always worth carrying, so if every class trickled
+	 * mana back then every class would keep a staff and magic would stop being a
+	 * caster's identity. Below the threshold a character can still cast — they simply
+	 * have to find mana somewhere rather than wait for it.
+	 *
+	 * <p><strong>This is the seam for everything that will grant recovery later</strong>
+	 * — potions, enchantments, gear, passive abilities. Those become further terms
+	 * multiplied in here, which is why this returns a multiplier rather than a boolean:
+	 * a character below the threshold with a mana-regen source should end up above
+	 * zero, not stay at it.
+	 */
+	public float manaRegenMultiplier(double arcane) {
+		return arcane >= this.manaRegenMinArcane ? 1.0F : 0.0F;
 	}
 
 	public ManaSettings mana() {
@@ -164,7 +256,13 @@ public record StatSettings(
 			Codec.INT.optionalFieldOf("stamina_per_pool_point", DEFAULT.staminaPerPoolPoint())
 					.forGetter(StatSettings::staminaPerPoolPoint),
 			Codec.INT.optionalFieldOf("mana_per_pool_point", DEFAULT.manaPerPoolPoint())
-					.forGetter(StatSettings::manaPerPoolPoint)
+					.forGetter(StatSettings::manaPerPoolPoint),
+			Codec.INT.optionalFieldOf("spell_damage_per_arcane", DEFAULT.spellDamagePerArcane())
+					.forGetter(StatSettings::spellDamagePerArcane),
+			Codec.INT.optionalFieldOf("spell_cooldown_per_arcane", DEFAULT.spellCooldownPerArcane())
+					.forGetter(StatSettings::spellCooldownPerArcane),
+			Codec.INT.optionalFieldOf("mana_regen_min_arcane", DEFAULT.manaRegenMinArcane())
+					.forGetter(StatSettings::manaRegenMinArcane)
 	).apply(instance, StatSettings::new));
 
 	public static final StreamCodec<ByteBuf, StatSettings> STREAM_CODEC = StreamCodec.of(
@@ -179,10 +277,14 @@ public record StatSettings(
 				buf.writeInt(settings.healthPerPoolPoint());
 				buf.writeInt(settings.staminaPerPoolPoint());
 				buf.writeInt(settings.manaPerPoolPoint());
+				buf.writeInt(settings.spellDamagePerArcane());
+				buf.writeInt(settings.spellCooldownPerArcane());
+				buf.writeInt(settings.manaRegenMinArcane());
 			},
 			// Java evaluates arguments left to right, so this matches the writes above.
 			buf -> new StatSettings(
 					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(),
+					buf.readInt(), buf.readInt(), buf.readInt(),
 					buf.readInt(), buf.readInt(), buf.readInt(),
 					buf.readInt(), buf.readInt(), buf.readInt()));
 
@@ -198,7 +300,10 @@ public record StatSettings(
 				clamp(this.manaRegenDelayTicks, 0, MAX_DELAY_TICKS),
 				clamp(this.healthPerPoolPoint, 0, MAX_PER_POOL_POINT),
 				clamp(this.staminaPerPoolPoint, 0, MAX_PER_POOL_POINT),
-				clamp(this.manaPerPoolPoint, 0, MAX_PER_POOL_POINT));
+				clamp(this.manaPerPoolPoint, 0, MAX_PER_POOL_POINT),
+				clamp(this.spellDamagePerArcane, 0, MAX_PERCENT_PER_POINT),
+				clamp(this.spellCooldownPerArcane, 0, MAX_PERCENT_PER_POINT),
+				clamp(this.manaRegenMinArcane, 0, MAX_MANA_REGEN_MIN_ARCANE));
 	}
 
 	private static int clamp(int value, int min, int max) {

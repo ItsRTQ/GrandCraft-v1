@@ -1,94 +1,99 @@
 package com.hrtq.grandcraft.stats;
 
+import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import net.minecraft.world.entity.LivingEntity;
+
 /**
- * One character's mana, owned by its {@code CombatController} the same way the
- * stamina pool is.
+ * One character's mana.
  *
- * <p>Holds no reference to its settings: the controller resolves the live
- * {@link ManaSettings} and passes them in, so a config change takes effect on the
- * next tick with nothing to invalidate.
+ * <p>Holds no state of its own and no reference to its settings: the pool lives on
+ * the {@code GrandCraftAttachments.MANA} attachment and the controller passes in the
+ * live {@link ManaSettings} and the bought ceiling, so a config change takes effect
+ * on the next tick with nothing to invalidate.
  *
  * <h2>No exhaustion, on purpose</h2>
  * Stamina has an exhaustion state because emptying it must be a punished mistake —
  * that gap is what makes "do not spend your last point" a decision under pressure.
- * Mana has no pressure to create until abilities exist, so inventing a lockout rule
- * now would be a rule with no mechanic behind it. Whatever running out of mana
- * should cost is a decision for the slice that lets you spend it.
+ * Mana has a different scarcity rule: it does not come back at all below the Arcane
+ * threshold, so running dry is already a real cost without a lockout on top. Whether
+ * casting on empty should hurt is a decision for the slice that gives it a reason to.
  *
- * <h2>Transient, and when that stops being right</h2>
- * The pool is not persisted, matching the stamina pool and the controller that holds
- * both. That is safe only because nothing spends mana: a value that is always full
- * loses nothing by being rebuilt on login.
+ * <h2>Persistent, unlike the stamina pool</h2>
+ * Statics over an attachment rather than fields on the controller, because the
+ * controller is transient and mana is not. That divergence is deliberate and is the
+ * consequence of mana being spendable and not universally recoverable: a pool that
+ * refilled on login would let anyone below the threshold — who cannot refill any
+ * other way — top up by quitting to the menu.
  *
- * <p><strong>Revisit this the moment an ability spends mana.</strong> At that point
- * logging out empty and back in full is a free refill, and this pool needs to move
- * to a persistent attachment.
+ * <p>Taking the entity in every method is this file's own long-standing convention,
+ * carried over from when it held the values directly.
+ *
+ * <h2>Absence means full</h2>
+ * The attachment has no initializer, so a character who has never had mana read has
+ * no attachment at all — and that is distinguishable from one whose pool is empty.
+ * {@link #read} treats absence as "fill to maximum", which is what makes a new
+ * character, and a freshly respawned one, start full.
  */
 public final class ManaPool {
-	/**
-	 * The pool starts full, but its size comes from settings the constructor cannot
-	 * see, so it is filled on first use instead. Tracked with a flag rather than a
-	 * sentinel value because an empty pool is a legitimate state.
-	 */
-	private boolean initialised;
-
-	/** Held as a float so a per-tick share of a per-second rate stays exact. */
-	private float current;
-
-	/** Ticks before regen resumes. Refreshed by every spend. */
-	private int regenDelay;
-
-	/**
-	 * Extra ceiling bought with attribute points. Held here for the same reasons the
-	 * stamina pool holds its own — see {@code StaminaPool.bonusMax}.
-	 */
-	private int bonusMax;
-
-	public float current() {
-		return this.current;
-	}
-
-	/** Sets the bought ceiling. Idempotent, and safe to call every tick. */
-	public void setBonusMax(int bonus) {
-		this.bonusMax = Math.max(bonus, 0);
+	private ManaPool() {
 	}
 
 	/**
-	 * This character's real ceiling: what the config says, plus what they bought. Every
-	 * read of the maximum goes through here so none of them can disagree.
+	 * This character's real ceiling: what the config says, plus what they bought.
+	 * Every read of the maximum goes through here so none of them can disagree.
 	 */
-	public float max(ManaSettings settings) {
-		return settings.maxMana() + this.bonusMax;
+	public static float max(ManaSettings settings, int bonusMax) {
+		return settings.maxMana() + Math.max(bonusMax, 0);
+	}
+
+	public static float current(LivingEntity entity, ManaSettings settings, int bonusMax) {
+		return read(entity, settings, bonusMax).current();
 	}
 
 	/**
 	 * Ticks still to wait before regen resumes. Sent to the client, which needs the
 	 * remaining delay rather than the configured one to carry the value forward.
 	 */
-	public int regenDelay() {
-		return this.regenDelay;
+	public static int regenDelay(LivingEntity entity, ManaSettings settings, int bonusMax) {
+		return read(entity, settings, bonusMax).regenDelayTicks();
 	}
 
 	/** Whether this character could pay for something costing {@code cost} right now. */
-	public boolean has(ManaSettings settings, float cost) {
-		fill(settings);
-		return this.current >= cost;
+	public static boolean has(LivingEntity entity, ManaSettings settings, int bonusMax, float cost) {
+		return read(entity, settings, bonusMax).current() >= cost;
 	}
 
-	/** Advances regen. Called once per tick, and only for characters that use mana. */
-	public void tick(ManaSettings settings) {
-		fill(settings);
+	/**
+	 * Advances regen. Called once per tick, and only for characters that use mana.
+	 *
+	 * @param regenMultiplier what this character's own recovery is worth, from
+	 *        {@link StatSettings#manaRegenMultiplier}. Zero means mana does not come
+	 *        back on its own at all, which is the normal state for anyone who has not
+	 *        invested in Arcane.
+	 */
+	public static void tick(LivingEntity entity, ManaSettings settings, int bonusMax,
+			float regenMultiplier) {
+		ManaState state = read(entity, settings, bonusMax);
 
-		if (this.regenDelay > 0) {
-			this.regenDelay--;
+		// Counted down even when nothing will recover, so a character who crosses the
+		// Arcane threshold mid-fight is not left holding a stale delay from the last
+		// thing they spent.
+		if (state.regenDelayTicks() > 0) {
+			write(entity, new ManaState(state.current(), state.regenDelayTicks() - 1));
 			return;
 		}
 
-		float max = max(settings);
+		float rate = settings.regenPerTick() * regenMultiplier;
+		float max = max(settings, bonusMax);
 
-		if (this.current < max) {
-			this.current = Math.min(max, this.current + settings.regenPerTick());
+		// Nothing to write when nothing moves, which is the common case: a full pool,
+		// or any character whose mana does not recover. Writing regardless would mean
+		// an attachment update every tick for every player forever.
+		if (rate <= 0.0F || state.current() >= max) {
+			return;
 		}
+
+		write(entity, new ManaState(Math.min(max, state.current() + rate), 0));
 	}
 
 	/**
@@ -97,32 +102,49 @@ public final class ManaPool {
 	 * @return false when the character could not afford it, in which case nothing is
 	 *         deducted and the caller must suppress whatever it was paying for.
 	 */
-	public boolean spend(ManaSettings settings, float cost) {
-		if (!has(settings, cost)) {
+	public static boolean spend(LivingEntity entity, ManaSettings settings, int bonusMax, float cost) {
+		ManaState state = read(entity, settings, bonusMax);
+
+		if (state.current() < cost) {
 			return false;
 		}
 
-		this.current = Math.max(0.0F, this.current - cost);
-		this.regenDelay = settings.regenDelayTicks();
+		write(entity, new ManaState(
+				Math.max(0.0F, state.current() - cost), settings.regenDelayTicks()));
 		return true;
 	}
 
 	/**
-	 * Fills the pool on first use, and keeps it under a ceiling that may since have
-	 * been lowered — by an admin editing the config, or by Arcane coming to drive the
-	 * maximum.
+	 * The stored pool, filled on first read and kept under a ceiling that may since
+	 * have been lowered — by an admin editing the config, or by a reclass taking back
+	 * the pool points that raised it.
+	 *
+	 * <p>Writes back in both of those cases rather than trimming only in memory: a
+	 * value that read as trimmed but saved as its old self would come back on the next
+	 * login, which is the same free refill this whole file exists to prevent.
 	 */
-	private void fill(ManaSettings settings) {
-		float max = max(settings);
+	private static ManaState read(LivingEntity entity, ManaSettings settings, int bonusMax) {
+		float max = max(settings, bonusMax);
+		ManaState state = entity.getAttached(GrandCraftAttachments.MANA);
 
-		if (!this.initialised) {
-			this.current = max;
-			this.initialised = true;
-			return;
+		// No attachment means never filled, not empty. The pool starts full and its
+		// size comes from settings no constructor could have seen.
+		if (state == null) {
+			ManaState filled = new ManaState(max, 0);
+			write(entity, filled);
+			return filled;
 		}
 
-		if (this.current > max) {
-			this.current = max;
+		if (state.current() > max) {
+			ManaState trimmed = new ManaState(max, state.regenDelayTicks());
+			write(entity, trimmed);
+			return trimmed;
 		}
+
+		return state;
+	}
+
+	private static void write(LivingEntity entity, ManaState state) {
+		entity.setAttached(GrandCraftAttachments.MANA, state);
 	}
 }

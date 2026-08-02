@@ -71,5 +71,27 @@ public enum CombatVerb {
 	 * implementation is player-specific. A mob gains it by gaining the verb and an AI
 	 * goal to decide when to raise it.
 	 */
-	BLOCK
+	BLOCK,
+
+	/**
+	 * This actor's attack is governed by what it is holding: its endlag and stamina
+	 * cost come from the held item's {@link WeaponCategory} rather than from its own
+	 * {@link ActorSettings}.
+	 *
+	 * <p><strong>Player only, and that is load-bearing.</strong> This verb is the
+	 * single gate between "the player's swing follows the weapon in its hand" and
+	 * "every mob in the game silently inherits the medium category's timing". An
+	 * actor without it is handed its own configured values unchanged, so the mob path
+	 * is byte-for-byte what it was before weapons existed — if a zombie's cadence ever
+	 * changes after a weapon change, this verb has leaked onto a mob entry.
+	 *
+	 * <p>Mob weapons are a later question and deliberately not this one. Vanilla mobs
+	 * do spawn holding swords, and letting an item drive their cadence would retune
+	 * every armed mob in the game as a side effect of a change aimed at the player.
+	 *
+	 * <p>Unlike stamina, dodge and block there is no runtime "off" half to pair with
+	 * this, because {@link WeaponCategory#UNARMED} is already the neutral case: an
+	 * actor holding nothing the tags claim gets values that match what it had before.
+	 */
+	WEAPONS
 }

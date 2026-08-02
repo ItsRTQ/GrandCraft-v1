@@ -178,7 +178,7 @@ public class CombatConfigScreen extends Screen {
 		}
 
 		root.addChild(switch (this.activeSection) {
-			case STAMINA -> buildStaminaGrid(seed);
+			case STAMINA -> buildStaminaGrid(actor, seed);
 			case DODGE -> buildDodgeGrid(seed);
 			case BLOCK -> buildBlockGrid(seed);
 			case COMBAT -> buildCombatGrid(actor, seed);
@@ -224,8 +224,16 @@ public class CombatConfigScreen extends Screen {
 			this.active = null;
 		}
 
-		this.recovery = ticks(seed.recoveryTicks(), ActorSettings.MAX_PHASE_TICKS);
-		row = addValue(grid, row, "recovery", false, this.recovery);
+		if (actor.has(CombatVerb.WEAPONS)) {
+			// Superseded: this actor's endlag comes from the category of whatever it is
+			// holding, and lives in /grandcraft config weapons. Showing the actor's own
+			// value here would be a field that silently does nothing, which is the way
+			// a tuning change gets reported as a broken mechanic.
+			this.recovery = null;
+		} else {
+			this.recovery = ticks(seed.recoveryTicks(), ActorSettings.MAX_PHASE_TICKS);
+			row = addValue(grid, row, "recovery", false, this.recovery);
+		}
 
 		this.stagger = ticks(seed.staggerTicks(), ActorSettings.MAX_STAGGER_TICKS);
 		row = addValue(grid, row, "stagger", false, this.stagger);
@@ -259,7 +267,7 @@ public class CombatConfigScreen extends Screen {
 	 * actor's behaviour rather than a stat rolled per individual, so nothing here is
 	 * a band even for actors that roll everything else.
 	 */
-	private GridLayout buildStaminaGrid(ActorSettings seed) {
+	private GridLayout buildStaminaGrid(CombatActor actor, ActorSettings seed) {
 		StaminaSettings stamina = seed.stamina();
 
 		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
@@ -274,8 +282,15 @@ public class CombatConfigScreen extends Screen {
 		this.regenDelay = ticks(stamina.regenDelayTicks(), StaminaSettings.MAX_DELAY_TICKS);
 		row = addValue(grid, row, "regen_delay", false, this.regenDelay);
 
-		this.attackCost = points(stamina.attackCost(), StaminaSettings.MAX_COST, "stamina_points");
-		row = addValue(grid, row, "attack_cost", false, this.attackCost);
+		if (actor.has(CombatVerb.WEAPONS)) {
+			// Superseded by the weapon category, exactly like endlag above. Every other
+			// cost here — sprint, jump — still belongs to the actor rather than to what
+			// it is holding, so only this one goes.
+			this.attackCost = null;
+		} else {
+			this.attackCost = points(stamina.attackCost(), StaminaSettings.MAX_COST, "stamina_points");
+			row = addValue(grid, row, "attack_cost", false, this.attackCost);
+		}
 
 		this.sprintCost = perSecond(stamina.sprintCostPerSecond(), StaminaSettings.MAX_RATE);
 		row = addValue(grid, row, "sprint_cost", false, this.sprintCost);
@@ -574,7 +589,8 @@ public class CombatConfigScreen extends Screen {
 							this.maxStamina.intValue(),
 							this.regen.intValue(),
 							this.regenDelay.intValue(),
-							this.attackCost.intValue(),
+							this.attackCost == null
+									? stored.stamina().attackCost() : this.attackCost.intValue(),
 							this.sprintCost.intValue(),
 							this.jumpCost.intValue()),
 					stored.dodge(),
@@ -626,7 +642,7 @@ public class CombatConfigScreen extends Screen {
 		return new ActorSettings(
 				this.startup == null ? stored.startupTicks() : this.startup.intValue(),
 				this.active == null ? stored.activeTicks() : this.active.intValue(),
-				this.recovery.intValue(),
+				this.recovery == null ? stored.recoveryTicks() : this.recovery.intValue(),
 				this.stagger.intValue(),
 				percentBand(this.healthMin, this.healthMax),
 				percentBand(this.damageMin, this.damageMax),

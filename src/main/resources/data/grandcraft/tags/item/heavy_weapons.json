@@ -1,0 +1,6 @@
+{
+  "values": [
+    "grandcraft:claymore",
+    { "id": "minecraft:mace", "required": false }
+  ]
+}

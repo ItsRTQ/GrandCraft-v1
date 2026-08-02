@@ -2,9 +2,11 @@ package com.hrtq.grandcraft;
 
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.GrandCraftCombat;
+import com.hrtq.grandcraft.combat.WeaponConfigFile;
 import com.hrtq.grandcraft.command.GrandCraftCommands;
 import com.hrtq.grandcraft.config.GameConfigFile;
 import com.hrtq.grandcraft.entity.GrandCraftEntities;
+import com.hrtq.grandcraft.item.GrandCraftItems;
 import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.progression.GrandCraftProgression;
@@ -40,6 +42,7 @@ public class GrandCraft implements ModInitializer {
 		// to exist by the time it runs.
 		GrandCraftAttributes.register();
 
+		GrandCraftItems.register();
 		GrandCraftEntities.register();
 		GrandCraftAttachments.register();
 		GrandCraftNetworking.register();
@@ -53,6 +56,7 @@ public class GrandCraft implements ModInitializer {
 		GameConfigFile.load();
 		StatConfigFile.load();
 		LevelConfigFile.load();
+		WeaponConfigFile.load();
 	}
 
 	public static Identifier id(String path) {

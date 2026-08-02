@@ -12,6 +12,7 @@
 		"LivingEntityRendererDodgeMixin",
 		"LivingEntityRendererExtractMixin",
 		"LocalPlayerSprintMixin",
+		"MinecraftAttackGuardMixin",
 		"MinecraftAttackMissMixin",
 		"MinecraftUseItemMixin",
 		"PlayerAttackStrengthMixin",

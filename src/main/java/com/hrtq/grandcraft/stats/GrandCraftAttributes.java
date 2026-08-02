@@ -47,7 +47,16 @@ public final class GrandCraftAttributes {
 	/** Armour, a little maximum health, and how fast stamina comes back. */
 	public static final Holder<Attribute> CONSTITUTION = register("constitution");
 
-	/** Reserved for the magic layer: mana pool, mana regen, spell damage. */
+	/**
+	 * Spell damage, through {@link ArcaneScaling}.
+	 *
+	 * <p>Read at the point of a cast rather than as an attribute modifier, for the
+	 * same reason Agility's stamina effect is: the configured rate is a whole number,
+	 * and a slight per-point effect folded back into one would round away entirely.
+	 *
+	 * <p>The mana pool and its recovery are still flat config values that this does
+	 * not touch — worth revisiting once there is more than one thing to spend on.
+	 */
 	public static final Holder<Attribute> ARCANE = register("arcane");
 
 	private GrandCraftAttributes() {

@@ -82,8 +82,20 @@ public final class CombatController {
 
 	private final StaminaPool stamina = new StaminaPool();
 
-	/** Only players have one filled; see {@link #syncStatEffects}. */
-	private final ManaPool mana = new ManaPool();
+	/**
+	 * The mana ceiling bought with attribute points.
+	 *
+	 * <p>Only the ceiling lives here. The pool itself is persisted on the entity, so
+	 * unlike stamina there is no object to hold — {@link ManaPool} is statics over an
+	 * attachment and this is the one derived figure it has to be handed.
+	 *
+	 * <p><strong>Deliberately not part of the saved record.</strong> It is derived from
+	 * {@code EssenceProgress.spentPools()} and the stat settings, both already
+	 * persisted, so storing it too would be a second source of truth that could go
+	 * stale after a reclass. Being a controller field also keeps it transient, which is
+	 * what makes writing it on the respawn path safe.
+	 */
+	private int manaBonusMax;
 
 	private CombatState state = CombatState.NEUTRAL;
 
@@ -200,6 +212,26 @@ public final class CombatController {
 	 */
 	private float syncedManaMax = -1.0F;
 
+	/**
+	 * The effective recovery rate as last reported.
+	 *
+	 * <p>Compared alongside the value and the ceiling, because the client
+	 * <em>extrapolates</em> the bar forward from this figure between packets — so a
+	 * rate that changes while the pool sits still is a change the client cannot see
+	 * and will not stop applying.
+	 *
+	 * <p>Found in game: a Sorcerer whose mana was recovering kept on recovering after
+	 * being reclassed below the Arcane threshold, until something moved the value and
+	 * forced a packet. The pool had stopped on the server the whole time; only the
+	 * client was still counting up.
+	 *
+	 * <p>Third instance of one pattern — the other two were the ceiling moving without
+	 * the value when a pool point was bought. <strong>Anything the payload carries that
+	 * the client acts on has to be part of the staleness test</strong>, not just the
+	 * headline number. Starts at -1 so the first send can never be skipped.
+	 */
+	private int syncedManaRegen = -1;
+
 	public CombatState state() {
 		return this.state;
 	}
@@ -272,10 +304,6 @@ public final class CombatController {
 		return this.stamina;
 	}
 
-	public ManaPool mana() {
-		return this.mana;
-	}
-
 	/**
 	 * Begins an attack if the actor is free to act.
 	 *
@@ -283,15 +311,33 @@ public final class CombatController {
 	 *         which case the caller must suppress the attack.
 	 */
 	public boolean beginAttack(LivingEntity entity, CombatProfile profile) {
-		if (!canStartAttack(profile)) {
+		WeaponProfile weapon = weaponProfile(entity, profile);
+
+		if (!canStartAttack(profile, weapon)) {
 			return false;
 		}
 
-		spendAttackCost(profile);
-		this.attack = profile.melee();
+		spendAttackCost(profile, weapon);
+		this.attack = weapon.attack();
 		this.activeHitConsumed = false;
 		enter(entity, CombatState.ATTACK_STARTUP, this.attack.startupTicks());
 		return true;
+	}
+
+	/**
+	 * The weapon governing this actor's next swing.
+	 *
+	 * <p>An actor without {@link CombatVerb#WEAPONS} is handed its own
+	 * {@link ActorSettings} values, so the mob path is exactly what it was before
+	 * weapons existed and no caller has to know which kind of actor it is holding.
+	 *
+	 * <p>Resolved from the main hand only. An off-hand weapon is not what the swing
+	 * comes from, and vanilla's own attack damage is main-hand too.
+	 */
+	private static WeaponProfile weaponProfile(LivingEntity entity, CombatProfile profile) {
+		return profile.usesWeapons()
+				? Weapons.profileFor(entity.getMainHandItem())
+				: WeaponProfile.fromActor(profile);
 	}
 
 	/**
@@ -300,16 +346,22 @@ public final class CombatController {
 	 *
 	 * <p>Takes the profile rather than reading a cached one so the stamina gate
 	 * cannot be bypassed by calling a no-argument overload — every caller already has
-	 * the profile in hand.
+	 * the profile in hand. It now takes the entity for the same reason: the cost
+	 * depends on what is being held, and resolving that here rather than at each call
+	 * site means a caller cannot accidentally price a swing as if it were unarmed.
 	 */
-	public boolean canStartAttack(CombatProfile profile) {
+	public boolean canStartAttack(LivingEntity entity, CombatProfile profile) {
+		return canStartAttack(profile, weaponProfile(entity, profile));
+	}
+
+	private boolean canStartAttack(CombatProfile profile, WeaponProfile weapon) {
 		if (this.state != CombatState.NEUTRAL || this.staggerTicks > 0) {
 			return false;
 		}
 
 		return !profile.usesStamina()
 				|| this.stamina.has(profile.stamina(),
-						this.staminaScaling.cost(profile.stamina().attackCost()));
+						this.staminaScaling.cost(weapon.attackCost()));
 	}
 
 	/**
@@ -357,8 +409,10 @@ public final class CombatController {
 	 * spent rather than merely attempted.
 	 */
 	public void enterRecoveryOnly(LivingEntity entity, CombatProfile profile) {
-		spendAttackCost(profile);
-		this.attack = profile.melee();
+		WeaponProfile weapon = weaponProfile(entity, profile);
+
+		spendAttackCost(profile, weapon);
+		this.attack = weapon.attack();
 		this.activeHitConsumed = true;
 		enter(entity, CombatState.ATTACK_RECOVERY, this.attack.recoveryTicks());
 	}
@@ -540,32 +594,42 @@ public final class CombatController {
 	 * the current lease to expire, so releasing feels like releasing.
 	 */
 	/**
-	 * Drops a raised guard so an attack can come straight out of it.
+	 * Skips the endlag of a guard that has just been lowered, so an attack can follow
+	 * it immediately.
 	 *
-	 * <p>Without this a guard is a dead end. {@link #canStartAttack} requires NEUTRAL
-	 * and GUARDING is not neutral, so a swing while holding block was refused outright
-	 * — and since holding block is exactly what a player does while under pressure,
-	 * "block the hit, then punish" was impossible. Letting go first works, but costs
-	 * the guard's endlag on top of the reaction, by which point the opening has gone.
+	 * <h2>You cannot attack through a raised guard</h2>
+	 * Deliberately acts on {@link CombatState#GUARD_RECOVERY} <em>only</em>. A raised
+	 * guard is a commitment: while it is up the actor is defending and not attacking,
+	 * and {@link #canStartAttack} refuses the swing because GUARDING is not NEUTRAL.
+	 * Dropping the guard is a decision the player has to make and time, which is where
+	 * the skill in "block, then punish" lives (user's call, 2026-08-02). An earlier
+	 * version lowered the guard automatically on a click, which let a player hold
+	 * block permanently and swing out of it for free — defence with no downside, and
+	 * exactly the kind of dominant option a fight should not have.
 	 *
-	 * <p>The trade is still paid: the guard is down from this moment, so the punish is
-	 * thrown with no defence up, and the attack's own stamina cost and endlag apply as
-	 * normal. What is skipped is only the endlag for <em>lowering</em> the guard, which
-	 * exists to stop a guard flickering on and off — not to tax committing to an
-	 * attack.
+	 * <h2>But dropping it must not cost a beat</h2>
+	 * What is skipped is only the endlag for <em>lowering</em> the guard. That endlag
+	 * exists to stop a guard flickering on and off; taxing the counter-attack with it
+	 * was an accident of the same timer. It mattered because a refused attack is not
+	 * queued — the click is swallowed — so the natural motion of letting go and
+	 * clicking landed inside those few ticks, did nothing at all, and the punish
+	 * window closed. Reading an attack correctly should be rewarded, not charged
+	 * reaction time.
 	 *
-	 * <p>Deliberately does not cancel {@link CombatState#GUARD_RECOVERY}. Once the
-	 * guard is already down that endlag is being served, and letting an attack skip it
-	 * would make dropping a guard free after all.
+	 * <p>The guard's endlag still applies to everything else, including raising the
+	 * guard again, so the flicker it was written to prevent is still prevented.
 	 *
 	 * <p>Refuses when the swing could not happen anyway — staggered, or too little
-	 * stamina to pay for it. Otherwise a click that was never going to connect would
-	 * still cost the player their guard, which reads as the guard dropping at random.
+	 * stamina to pay for it — so a click that was never going to connect does not
+	 * quietly consume the endlag either. Note the stamina arm of that is
+	 * <em>silent</em>: the click does nothing and nothing says why. The stamina bar is
+	 * the only tell, which is fine while the costs are legible and worth revisiting if
+	 * it is ever reported.
 	 *
-	 * @return true when a guard was actually dropped
+	 * @return true when guard endlag was actually skipped
 	 */
-	public boolean cancelGuardForAttack(LivingEntity entity, CombatProfile profile) {
-		if (this.state != CombatState.GUARD_RAISE && this.state != CombatState.GUARDING) {
+	public boolean cancelGuardEndlagForAttack(LivingEntity entity, CombatProfile profile) {
+		if (this.state != CombatState.GUARD_RECOVERY) {
 			return false;
 		}
 
@@ -574,16 +638,13 @@ public final class CombatController {
 		}
 
 		if (profile.usesStamina() && !this.stamina.has(profile.stamina(),
-				this.staminaScaling.cost(profile.stamina().attackCost()))) {
+				this.staminaScaling.cost(weaponProfile(entity, profile).attackCost()))) {
 			return false;
 		}
 
-		dropGuardHold();
-
-		// Straight to neutral rather than through releaseGuard, which would enter
-		// GUARD_RECOVERY and leave the attack refused for exactly the reason above.
-		// This also clears the guard's movement penalty, since returnToNeutral
-		// re-syncs it.
+		// The guard is already down by this point — this only ends the tail early.
+		// returnToNeutral rather than a bare state write, because it is what re-syncs
+		// the movement penalty and tells watching clients the pose is over.
 		returnToNeutral(entity);
 		return true;
 	}
@@ -876,12 +937,12 @@ public final class CombatController {
 		reportStaminaSoon();
 	}
 
-	private void spendAttackCost(CombatProfile profile) {
+	private void spendAttackCost(CombatProfile profile, WeaponProfile weapon) {
 		if (!profile.usesStamina()) {
 			return;
 		}
 
-		this.stamina.spend(profile.stamina(), this.staminaScaling.cost(profile.stamina().attackCost()));
+		this.stamina.spend(profile.stamina(), this.staminaScaling.cost(weapon.attackCost()));
 		reportStaminaSoon();
 	}
 
@@ -943,6 +1004,34 @@ public final class CombatController {
 	}
 
 	/**
+	 * Pays for a cast.
+	 *
+	 * @return false when the caster could not afford it, in which case nothing was
+	 *         deducted and the caller must suppress the spell entirely.
+	 */
+	public boolean spendMana(LivingEntity entity, ManaSettings settings, float cost) {
+		if (!ManaPool.spend(entity, settings, this.manaBonusMax, cost)) {
+			return false;
+		}
+
+		reportManaSoon();
+		return true;
+	}
+
+	/**
+	 * Forces the next mana sync rather than waiting out the throttle.
+	 *
+	 * <p>Not optional. {@code syncMana} returns early for up to four ticks and only
+	 * sends when the value has moved by half a point, so without this a cast would take
+	 * a fifth of a second to appear on the bar and would read as the spend not
+	 * registering. Two bugs of exactly this shape have already been found in the pool
+	 * ceilings, and both were reported as "the bar did not update".
+	 */
+	private void reportManaSoon() {
+		this.manaSyncDelay = 0;
+	}
+
+	/**
 	 * Tells the owner's client about its pool when the copy it holds has gone stale.
 	 *
 	 * <p>Only players have a bar to draw, so nothing is tracked for mobs — otherwise
@@ -997,15 +1086,24 @@ public final class CombatController {
 			return;
 		}
 
-		ManaSettings settings = StatTuning.current().mana();
+		StatSettings stats = StatTuning.current();
+		ManaSettings settings = stats.mana();
+
+		// Recovery is gated on Arcane, so it is a property of this character rather
+		// than of the settings — which is why it is resolved here and threaded through
+		// rather than folded into a per-player ManaSettings. Deriving one of those is
+		// the trap the stamina scaling exists to avoid: every field is an int, so a
+		// slight effect would round away to nothing.
+		float regenMultiplier =
+				stats.manaRegenMultiplier(StatEffects.statOf(entity, GrandCraftAttributes.ARCANE));
 
 		if (settings.enabled()) {
-			this.mana.tick(settings);
+			ManaPool.tick(entity, settings, this.manaBonusMax, regenMultiplier);
 		}
 
 		// Reported even when mana is switched off, so doing so actually clears the
 		// character sheet's row instead of freezing the last value there.
-		syncMana(player, settings);
+		syncMana(player, settings, regenMultiplier);
 	}
 
 	/**
@@ -1015,7 +1113,7 @@ public final class CombatController {
 	 * per life, which is also why a fault here would be invisible everywhere except
 	 * the character sheet.
 	 */
-	private void syncMana(ServerPlayer player, ManaSettings settings) {
+	private void syncMana(ServerPlayer player, ManaSettings settings, float regenMultiplier) {
 		if (this.manaSyncDelay > 0) {
 			this.manaSyncDelay--;
 			return;
@@ -1025,22 +1123,34 @@ public final class CombatController {
 		// buying a point moves the maximum without moving the current value, so a
 		// comparison against the config figure would decide nothing had changed and
 		// never send the packet that tells the sheet about the purchase.
-		float max = this.mana.max(settings);
+		float max = ManaPool.max(settings, this.manaBonusMax);
+		float current = ManaPool.current(player, settings, this.manaBonusMax);
 
+		// The *effective* rate, not the configured one. The client extrapolates the bar
+		// forward from this figure between packets, so sending the raw value to someone
+		// whose mana does not recover would draw a bar climbing on its own and then
+		// snapping back on the next sync. Same rule as the scaled jump cost the stamina
+		// payload carries.
+		int regenPerSecond = Math.round(settings.regenPerSecond() * regenMultiplier);
+
+		// The rate is part of the test, not just the value and the ceiling — see the
+		// note on syncedManaRegen. A reclass moves the rate while the pool sits still.
 		if (max == this.syncedManaMax
-				&& Math.abs(this.mana.current() - this.syncedMana) < CombatConstants.STAMINA_SYNC_EPSILON) {
+				&& regenPerSecond == this.syncedManaRegen
+				&& Math.abs(current - this.syncedMana) < CombatConstants.STAMINA_SYNC_EPSILON) {
 			return;
 		}
 
-		this.syncedMana = this.mana.current();
+		this.syncedMana = current;
 		this.syncedManaMax = max;
+		this.syncedManaRegen = regenPerSecond;
 		this.manaSyncDelay = CombatConstants.STAMINA_SYNC_INTERVAL_TICKS;
 
 		ServerPlayNetworking.send(player, new ManaPayload(
-				this.mana.current(),
+				current,
 				max,
-				settings.regenPerSecond(),
-				this.mana.regenDelay()));
+				regenPerSecond,
+				ManaPool.regenDelay(player, settings, this.manaBonusMax)));
 	}
 
 	private boolean staminaSyncDue(CombatProfile profile) {
@@ -1400,9 +1510,17 @@ public final class CombatController {
 		// feature's off switch, and a bought ceiling must not be a way round it — with
 		// mana off the pool is not ticked, so a non-zero ceiling would leave the sheet
 		// showing a pool that could never fill.
-		this.mana.setBonusMax(settings.mana().enabled()
+		//
+		// THE RESPAWN TRAP: this method runs on the *new* player during
+		// AFTER_RESPAWN, so it must not read or write the MANA attachment. Assigning a
+		// controller field is safe because the controller is transient and this one is
+		// brand new. If anyone ever folds this figure into ManaState, or marks that
+		// attachment copyOnDeath, this line becomes a destructive write to an
+		// attachment Fabric may not have copied yet — the exact failure that cost a
+		// runtime round for the class attachment and again for the spend record.
+		this.manaBonusMax = settings.mana().enabled()
 				? settings.poolManaBonus(spentPools)
-				: 0);
+				: 0;
 
 		StatEffects.apply(entity, settings, spentPools);
 	}

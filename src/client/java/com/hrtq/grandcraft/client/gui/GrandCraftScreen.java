@@ -21,6 +21,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
@@ -33,10 +34,20 @@ import net.minecraft.util.Util;
 /**
  * The character sheet, opened with the {@code =} key.
  *
- * <p>Two different screens behind one key. Without a class it is the class picker it
- * has always been. With one it is the sheet: the character on the left with their
- * class, Essence Power level and progress underneath, their stats and pools beside
- * them, and the right half held for whatever comes next.
+ * <p>One screen, always the same shape: the character on the left with their class,
+ * Essence Power level and progress underneath, their stats and pools beside them, and
+ * a panel filling the right half.
+ *
+ * <h2>The right half does the class picking</h2>
+ * There is no separate picker screen any more. An unclassed character gets a class
+ * browser in that panel — one class at a time, arrows either side — and choosing turns
+ * the panel into the placeholder for the skill-lines that will eventually live there.
+ *
+ * <p>The point of browsing in place is that the <em>left half previews the choice</em>:
+ * the name under the model and every stat row read {@code current → what it would
+ * become}, so the arrows compare characters rather than paging through four words. The
+ * preview is a display concern only — nothing is sent until Choose is pressed, and
+ * nothing is predicted after it either. See {@link #previewDelta}.
  *
  * <h2>Why every widget is sized to its own text</h2>
  * 26.2's {@code StringWidget} draws at {@code getX()} with no centring term, so a
@@ -48,9 +59,9 @@ import net.minecraft.util.Util;
  *
  * <h2>Widgets for anything hoverable, drawing for the rest</h2>
  * Stat and pool rows are widgets because a widget is what carries a tooltip — the
- * numbers are bare, and hovering is what explains them. The divider, the model and
- * the "coming soon" panel are drawn directly in {@link #extractRenderState}, since
- * none of them answer the mouse.
+ * numbers are bare, and hovering is what explains them. The divider, the model and the
+ * panel background are drawn directly in {@link #extractRenderState}, since none of
+ * them answer the mouse.
  */
 public class GrandCraftScreen extends Screen {
 	private static final int TITLE_TOP = 15;
@@ -106,9 +117,24 @@ public class GrandCraftScreen extends Screen {
 	private static final int MODEL_REFERENCE_HEIGHT = 70;
 	private static final float MODEL_Y_OFFSET = 0.0625F;
 
-	private static final int BUTTON_WIDTH = 150;
 	private static final int BUTTON_HEIGHT = 20;
-	private static final int BUTTON_SPACING = 24;
+
+	/** Inset of the class browser's contents from the panel's own edges. */
+	private static final int PANEL_INSET = 10;
+
+	private static final int ARROW_SIZE = 20;
+
+	/**
+	 * Distance from the panel's centre line to the inner edge of each arrow.
+	 *
+	 * <p>Fixed rather than derived from the name's width on purpose: an arrow that sits
+	 * a set distance from the longest name would jump inwards on "Cleric" and outwards
+	 * on "Sorcerer", so cycling would move the very buttons being cycled with. Wide
+	 * enough to clear the longest class name at a comfortable margin.
+	 */
+	private static final int ARROW_OFFSET = 44;
+
+	private static final int CHOOSE_BUTTON_WIDTH = 100;
 
 	/** Shown for a pool the server has not reported, or has switched off entirely. */
 	private static final Component MISSING = Component.literal("—");
@@ -120,6 +146,17 @@ public class GrandCraftScreen extends Screen {
 
 	private boolean classed;
 
+	/**
+	 * Which class the browser is showing, as an index into
+	 * {@link PlayerClass#SELECTABLE}.
+	 *
+	 * <p>Deliberately <em>not</em> cleared by {@link #init}: pressing an arrow rebuilds
+	 * the whole screen, so resetting it there would snap the browser back to the first
+	 * class on every press and make the arrows do nothing. It survives a resize for the
+	 * same reason.
+	 */
+	private int previewIndex;
+
 	private int dividerX;
 	private int contentTop;
 	private int contentBottom;
@@ -128,6 +165,11 @@ public class GrandCraftScreen extends Screen {
 	private int modelBottom;
 	private int modelSize;
 	private int panelRight;
+
+	/** The right-hand panel: browser while unclassed, placeholder once classed. */
+	private int rightPanelLeft;
+	private int rightPanelRight;
+	private int rightPanelCentre;
 
 	/** Where the identity block under the model is centred. */
 	private int identityCentreX;
@@ -155,6 +197,15 @@ public class GrandCraftScreen extends Screen {
 	private int shownStatPoints;
 	private int shownPoolPoints;
 
+	/**
+	 * The class the screen was built for.
+	 *
+	 * <p>Watched by {@link #tick} because choosing a class is not predicted: the button
+	 * only sends, and the change arrives a tick or two later through the attachment's
+	 * own sync. This is what turns the browser into the placeholder when it lands.
+	 */
+	private PlayerClass shownClass;
+
 	public GrandCraftScreen() {
 		super(Component.translatable("screen.grandcraft.character_sheet"));
 	}
@@ -172,15 +223,11 @@ public class GrandCraftScreen extends Screen {
 
 		addCentred(this.title, this.width / 2, TITLE_TOP);
 
-		PlayerClass playerClass = this.minecraft.player.getAttachedOrElse(
+		this.shownClass = this.minecraft.player.getAttachedOrElse(
 				GrandCraftAttachments.PLAYER_CLASS, PlayerClass.PEASANT);
-		this.classed = playerClass != PlayerClass.PEASANT;
+		this.classed = this.shownClass != PlayerClass.PEASANT;
 
-		if (this.classed) {
-			initSheet(playerClass);
-		} else {
-			initClassSelection();
-		}
+		initSheet(this.shownClass);
 	}
 
 	// ------------------------------------------------------------------ the sheet
@@ -189,6 +236,10 @@ public class GrandCraftScreen extends Screen {
 		this.dividerX = this.width / 2;
 		this.contentTop = CONTENT_TOP;
 		this.contentBottom = this.height - BOTTOM_MARGIN;
+
+		this.rightPanelLeft = this.dividerX + EDGE_PADDING;
+		this.rightPanelRight = this.width - EDGE_PADDING;
+		this.rightPanelCentre = (this.rightPanelLeft + this.rightPanelRight) / 2;
 
 		// The panel is sized to its content and anchored against the divider; the model
 		// then takes whatever is left. In that order a narrow window loses picture
@@ -201,10 +252,14 @@ public class GrandCraftScreen extends Screen {
 		this.modelRight = Math.max(this.modelLeft + 1, panelLeft - COLUMN_GAP);
 		this.modelBottom = this.contentBottom - IDENTITY_RESERVE;
 		this.modelSize = modelSize();
-		this.identityCentreX = (this.modelLeft + this.modelRight) / 2;
+		this.identityCentreX = identityCentreX();
 
 		buildIdentity(playerClass);
 		buildPanel(panelLeft);
+
+		if (!this.classed) {
+			buildClassBrowser();
+		}
 	}
 
 	/**
@@ -214,12 +269,15 @@ public class GrandCraftScreen extends Screen {
 	 * <p>The two progression lines start empty and are filled by
 	 * {@link #refreshProgress}, so there is one place that decides how they read
 	 * rather than an initial version and an updating version that could disagree.
+	 *
+	 * <p>While browsing, the class line reads {@code Peasant → Warrior} in the same
+	 * grey-to-green form the stat rows use, so the whole left column says "this is what
+	 * you would become" in one voice rather than two.
 	 */
 	private void buildIdentity(PlayerClass playerClass) {
 		int y = this.modelBottom + SECTION_GAP;
 
-		addCentred(playerClass.displayName().copy().withStyle(ChatFormatting.YELLOW),
-				this.identityCentreX, y);
+		addCentred(identityName(), this.identityCentreX, y);
 
 		this.levelValue = addCentred(Component.empty(), this.identityCentreX, y + ROW_HEIGHT);
 		this.levelValue.setTooltip(Tooltip.create(
@@ -280,16 +338,27 @@ public class GrandCraftScreen extends Screen {
 	/**
 	 * A stat: the bare number, with what it currently does on the tooltip, and a spend
 	 * button in the reserved column while there is a point to spend.
+	 *
+	 * <p>While browsing, the number becomes {@code 5 → 14} and the tooltip describes the
+	 * value on the <em>right</em> of that arrow — the point of hovering mid-browse is to
+	 * find out what the class would buy you, not to be told again what you already have.
 	 */
 	private int addStatRow(CharacterStat stat, int panelLeft, int y) {
 		String key = stat.translationKey();
 		double value = StatEffects.statOf(this.minecraft.player, stat.attribute());
+		double described = value;
+		Component reading = Component.literal(whole(value));
+
+		if (previewing()) {
+			described = value + previewDelta(stat);
+			reading = preview(Component.literal(whole(value)), Component.literal(whole(described)));
+		}
 
 		StringWidget name = place(label(key), panelLeft, y);
-		StringWidget number = placeRight(Component.literal(whole(value)), y);
+		StringWidget number = placeRight(reading, y);
 
 		// On both halves of the row, so hovering anywhere along it works.
-		Tooltip tooltip = Tooltip.create(statTooltip(key, value));
+		Tooltip tooltip = Tooltip.create(statTooltip(key, described));
 		name.setTooltip(tooltip);
 		number.setTooltip(tooltip);
 
@@ -397,17 +466,60 @@ public class GrandCraftScreen extends Screen {
 			return;
 		}
 
+		setCentredValue(this.levelValue, levelText());
+		setCentredValue(this.essenceValue, essenceText());
+	}
+
+	/**
+	 * The class line: plain once chosen, {@code Peasant → Warrior} while browsing.
+	 *
+	 * <p>Built here rather than inline so {@link #identityCentreX} can measure the same
+	 * line that will actually be drawn — the preview form is roughly twice the width of
+	 * a bare class name, and that difference is exactly what has to be laid out for.
+	 */
+	private Component identityName() {
+		return previewing()
+				? preview(this.shownClass.displayName(), previewClass().displayName())
+				: this.shownClass.displayName().copy().withStyle(ChatFormatting.YELLOW);
+	}
+
+	private Component levelText() {
+		return Component.translatable("screen.grandcraft.sheet.level", progress().level());
+	}
+
+	private Component essenceText() {
 		EssenceProgress progress = progress();
 
 		// The cost curve is the server's, and arrives with the level settings — which is
 		// why those are pushed to every client rather than held server side.
 		LevelSettings settings = ClientLevelSettings.current();
 
-		setCentredValue(this.levelValue,
-				Component.translatable("screen.grandcraft.sheet.level", progress.level()));
-		setCentredValue(this.essenceValue,
-				Component.translatable("screen.grandcraft.sheet.essence",
-						progress.essence(), progress.currentLevelCost(settings)));
+		return Component.translatable("screen.grandcraft.sheet.essence",
+				progress.essence(), progress.currentLevelCost(settings));
+	}
+
+	/**
+	 * Where the block under the model is centred.
+	 *
+	 * <p>Under the model, but <strong>never starting before the screen edge</strong>.
+	 * The model column is the part of the layout that gives way — the panel is sized
+	 * from its own labels and anchored to the divider, and the model takes what is left
+	 * — so at a small window or a large GUI scale that column collapses to a few dozen
+	 * pixels while the lines written underneath it do not get any shorter. Centring
+	 * blindly in it walked them off the left of the screen, which is what this clamps.
+	 *
+	 * <p>Measured from the widest of the three lines, so they stay centred on each other
+	 * rather than each being pushed a different distance. The push is only ever
+	 * rightwards, into the gap below the panel, which is empty at this height.
+	 */
+	private int identityCentreX() {
+		int half = Math.max(this.font.width(identityName()),
+				Math.max(this.font.width(levelText()), this.font.width(essenceText()))) / 2;
+
+		int centred = (this.modelLeft + this.modelRight) / 2;
+		int rightmost = this.dividerX - EDGE_PADDING - half;
+
+		return Math.min(Math.max(centred, EDGE_PADDING + half), Math.max(rightmost, EDGE_PADDING + half));
 	}
 
 	// ------------------------------------------------------------------- tooltips
@@ -492,9 +604,15 @@ public class GrandCraftScreen extends Screen {
 	private boolean panelIsStale() {
 		EssenceProgress progress = progress();
 
-		return progress.statPoints() != this.shownStatPoints
+		return actualClass() != this.shownClass
+				|| progress.statPoints() != this.shownStatPoints
 				|| progress.poolPoints() != this.shownPoolPoints
 				|| !currentStats().equals(this.shownStats);
+	}
+
+	private PlayerClass actualClass() {
+		return this.minecraft.player.getAttachedOrElse(
+				GrandCraftAttachments.PLAYER_CLASS, PlayerClass.PEASANT);
 	}
 
 	private int widestLabel() {
@@ -560,27 +678,137 @@ public class GrandCraftScreen extends Screen {
 		widget.setX(this.identityCentreX - width / 2);
 	}
 
-	// -------------------------------------------------------------- class picking
+	// -------------------------------------------------------------- class browsing
 
-	private void initClassSelection() {
-		addCentred(Component.translatable("screen.grandcraft.choose_class"),
-				this.width / 2, CONTENT_TOP);
+	/**
+	 * The class browser that fills the right panel until a class is chosen: one class
+	 * at a time, an arrow either side, and the button that commits.
+	 *
+	 * <p>Laid out from <em>both</em> ends. The heading, name and description hang from
+	 * the top; Choose and the permanence line are anchored to the bottom. That is what
+	 * keeps the button still while cycling — the description is the only part whose
+	 * height varies, and growing it downwards would otherwise walk the button around
+	 * under the mouse.
+	 */
+	private void buildClassBrowser() {
+		PlayerClass choice = previewClass();
+		int centre = this.rightPanelCentre;
 
-		int count = PlayerClass.SELECTABLE.size();
-		int totalHeight = count * BUTTON_SPACING - (BUTTON_SPACING - BUTTON_HEIGHT);
-		int y = (this.height - totalHeight) / 2;
+		addCentred(Component.translatable("screen.grandcraft.choose_class")
+				.withStyle(ChatFormatting.GOLD), centre, this.contentTop + PANEL_INSET);
 
-		for (PlayerClass choice : PlayerClass.SELECTABLE) {
-			addRenderableWidget(Button.builder(choice.displayName(), button -> selectClass(choice))
-					.bounds((this.width - BUTTON_WIDTH) / 2, y, BUTTON_WIDTH, BUTTON_HEIGHT)
-					.build());
-			y += BUTTON_SPACING;
-		}
+		int arrowY = this.contentTop + PANEL_INSET + ROW_HEIGHT + SECTION_GAP;
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("screen.grandcraft.class_previous"),
+						pressed -> cycle(-1))
+				.bounds(centre - ARROW_OFFSET - ARROW_SIZE, arrowY, ARROW_SIZE, ARROW_SIZE)
+				.build());
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("screen.grandcraft.class_next"),
+						pressed -> cycle(1))
+				.bounds(centre + ARROW_OFFSET, arrowY, ARROW_SIZE, ARROW_SIZE)
+				.build());
+
+		// Centred against the arrows rather than sitting on their top edge.
+		addCentred(choice.displayName().copy().withStyle(ChatFormatting.YELLOW),
+				centre, arrowY + (ARROW_SIZE - LINE_HEIGHT) / 2);
+
+		int permanentY = this.contentBottom - PANEL_INSET - LINE_HEIGHT;
+		int chooseY = permanentY - SECTION_GAP - BUTTON_HEIGHT;
+
+		addCentred(Component.translatable("screen.grandcraft.class_permanent")
+				.withStyle(ChatFormatting.DARK_GRAY), centre, permanentY);
+
+		addRenderableWidget(Button.builder(
+						Component.translatable("screen.grandcraft.class_choose"),
+						pressed -> selectClass(choice))
+				.bounds(centre - CHOOSE_BUTTON_WIDTH / 2, chooseY,
+						CHOOSE_BUTTON_WIDTH, BUTTON_HEIGHT)
+				.build());
+
+		// Built last because it is the one part sized by its content, so it is the one
+		// that has to be told how much room the fixed furniture left it.
+		int descriptionTop = arrowY + ARROW_SIZE + SECTION_GAP * 2;
+		addDescription(choice, centre, descriptionTop, chooseY - SECTION_GAP - descriptionTop);
 	}
 
+	/**
+	 * The class blurb, wrapped to the panel.
+	 *
+	 * <p>{@code setCentered} centres each line around {@code getX() + getWidth() / 2},
+	 * where the width is the <em>text block's</em> and not {@code maxWidth} — so the
+	 * block still has to be positioned by hand, exactly as every other widget on this
+	 * screen is. Sizing it first and placing it second is the whole trick.
+	 *
+	 * <p>Capped to the rows that actually fit. On a small window the blurb would
+	 * otherwise run down through the Choose button; losing the tail of a sentence reads
+	 * as a window too small for it, where text printed over a button reads as broken.
+	 */
+	private void addDescription(PlayerClass choice, int centre, int y, int available) {
+		MultiLineTextWidget description = new MultiLineTextWidget(
+				choice.description().copy().withStyle(ChatFormatting.GRAY), this.font);
+
+		description.setMaxWidth(this.rightPanelRight - this.rightPanelLeft - PANEL_INSET * 2);
+		description.setMaxRows(Math.max(1, available / LINE_HEIGHT));
+		description.setCentered(true);
+		description.setY(y);
+		description.setX(centre - description.getWidth() / 2);
+
+		addRenderableWidget(description);
+	}
+
+	/**
+	 * Moves the browser one class along, wrapping in both directions — a cycle with ends
+	 * would need its arrows disabling at them, and there is no reason for four choices
+	 * to have a first and a last.
+	 */
+	private void cycle(int step) {
+		this.previewIndex = Math.floorMod(this.previewIndex + step, PlayerClass.SELECTABLE.size());
+		rebuildWidgets();
+	}
+
+	/**
+	 * Commits the choice.
+	 *
+	 * <p>The screen stays open and nothing changes on it yet: the request goes to the
+	 * server, and the class comes back through the attachment's own sync — which
+	 * {@link #tick} is watching for. Same contract as a spend button, and it means a
+	 * refused choice simply leaves the browser where it was.
+	 */
 	private void selectClass(PlayerClass choice) {
 		ClientPlayNetworking.send(new SelectClassPayload(choice));
-		onClose();
+	}
+
+	/** The class the browser is currently showing. */
+	private PlayerClass previewClass() {
+		return PlayerClass.SELECTABLE.get(
+				Math.floorMod(this.previewIndex, PlayerClass.SELECTABLE.size()));
+	}
+
+	private boolean previewing() {
+		return !this.classed;
+	}
+
+	/**
+	 * How far a stat would move if the browsed class were chosen.
+	 *
+	 * <p>Taken as the difference between the two classes' baselines rather than by
+	 * building the target value outright, because the server's own sum is
+	 * {@code baseline + points spent} — and later, gear on top. A delta rides along with
+	 * everything else already in the number, so the preview cannot drift from what
+	 * {@code PlayerStats.applyBaselines} would actually write.
+	 */
+	private int previewDelta(CharacterStat stat) {
+		return previewClass().baseStats().get(stat) - this.shownClass.baseStats().get(stat);
+	}
+
+	/** A value and what it would become: current in grey, target in green. */
+	private static Component preview(Component current, Component target) {
+		return Component.translatable("screen.grandcraft.sheet.preview",
+				current.copy().withStyle(ChatFormatting.GRAY),
+				target.copy().withStyle(ChatFormatting.GREEN));
 	}
 
 	// --------------------------------------------------------------------- render
@@ -589,14 +817,14 @@ public class GrandCraftScreen extends Screen {
 	public void tick() {
 		super.tick();
 
-		if (!this.classed || this.minecraft.player == null) {
+		if (this.minecraft.player == null) {
 			return;
 		}
 
 		// Rebuilt only when something structural moved — a point spent, a level gained,
-		// a stat changed. Doing this every tick instead would take a tooltip out from
-		// under the mouse continuously; doing it never would leave a spent point showing
-		// the old number and its button still there.
+		// a stat changed, a class chosen. Doing this every tick instead would take a
+		// tooltip out from under the mouse continuously; doing it never would leave a
+		// spent point showing the old number and its button still there.
 		if (this.shownStats != null && panelIsStale()) {
 			rebuildWidgets();
 			return;
@@ -609,19 +837,22 @@ public class GrandCraftScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY,
 			float partialTick) {
-		// Guarded on having a class: without one this is the picker, and a divider down
-		// the middle of it would be furniture from a screen that is not being shown.
-		if (this.classed && this.minecraft.player != null) {
+		if (this.minecraft.player != null) {
 			extractor.fill(this.dividerX - 1, this.contentTop,
 					this.dividerX + 1, this.contentBottom, DIVIDER_COLOUR);
 
-			extractor.fill(this.dividerX + EDGE_PADDING, this.contentTop,
-					this.width - EDGE_PADDING, this.contentBottom, PANEL_COLOUR);
-			extractor.centeredText(this.font,
-					Component.translatable("screen.grandcraft.sheet.coming_soon"),
-					(this.dividerX + this.width) / 2,
-					(this.contentTop + this.contentBottom - LINE_HEIGHT) / 2,
-					COMING_SOON_COLOUR);
+			extractor.fill(this.rightPanelLeft, this.contentTop,
+					this.rightPanelRight, this.contentBottom, PANEL_COLOUR);
+
+			// The panel holds the class browser until a class is chosen; the placeholder
+			// is what it reverts to afterwards, naming what will eventually fill it.
+			if (this.classed) {
+				extractor.centeredText(this.font,
+						Component.translatable("screen.grandcraft.sheet.coming_soon"),
+						this.rightPanelCentre,
+						(this.contentTop + this.contentBottom - LINE_HEIGHT) / 2,
+						COMING_SOON_COLOUR);
+			}
 
 			InventoryScreen.extractEntityInInventoryFollowsMouse(extractor,
 					this.modelLeft, this.contentTop, this.modelRight, this.modelBottom,

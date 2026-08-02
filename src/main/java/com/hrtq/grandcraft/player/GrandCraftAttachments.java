@@ -4,6 +4,7 @@ import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.combat.CombatController;
 import com.hrtq.grandcraft.combat.RolledStats;
 import com.hrtq.grandcraft.progression.EssenceProgress;
+import com.hrtq.grandcraft.stats.ManaState;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
@@ -58,6 +59,38 @@ public final class GrandCraftAttachments {
 	public static final AttachmentType<RolledStats> ROLLED_STATS = AttachmentRegistry.<RolledStats>builder()
 			.persistent(RolledStats.CODEC)
 			.buildAndRegister(GrandCraft.id("rolled_stats"));
+
+	/**
+	 * Mana, and the delay before it starts coming back.
+	 *
+	 * <p>Persistent because mana is now spendable and does not recover for everyone.
+	 * Logging out empty and back in full would be a free refill, and a considerably
+	 * better one for a character below the Arcane threshold, who otherwise cannot
+	 * refill at all.
+	 *
+	 * <p><strong>Deliberately not {@code copyOnDeath}.</strong> Dying restores mana
+	 * exactly as it restores health and stamina, which is the intended rule — and it
+	 * is also what keeps this attachment clear of THE RESPAWN TRAP. Fabric copies only
+	 * {@code copyOnDeath} attachments, from its own listener on the same
+	 * {@code ServerPlayerEvents.AFTER_RESPAWN} this mod subscribes to, and cross-mod
+	 * listener order is nobody's to control. With nothing to copy there is no race to
+	 * lose. <em>Nothing on the respawn path may read or write this</em> — see the note
+	 * on {@code CombatController.syncStatEffects}.
+	 *
+	 * <p><strong>Deliberately no initializer.</strong> "Never filled" has to stay
+	 * distinguishable from "filled and spent to nothing", because the pool starts full
+	 * and its size comes from settings no constructor can see. Absence means fill to
+	 * maximum; a defaulted attachment would answer every read with zero and hand every
+	 * new character an empty pool. Same reasoning as {@link #ROLLED_STATS}.
+	 *
+	 * <p><strong>Deliberately not synced.</strong> {@code ManaPayload} is the one
+	 * channel to the client and it carries the derived ceiling and the effective
+	 * recovery rate, neither of which is in this record. A second channel would be a
+	 * second answer.
+	 */
+	public static final AttachmentType<ManaState> MANA = AttachmentRegistry.<ManaState>builder()
+			.persistent(ManaState.CODEC)
+			.buildAndRegister(GrandCraft.id("mana"));
 
 	private GrandCraftAttachments() {
 	}

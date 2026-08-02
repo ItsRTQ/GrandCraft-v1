@@ -12,9 +12,15 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 /**
  * Turns stat values into the vanilla attributes they modify.
  *
- * <p>Only Constitution has anything to express here. Agility is spent through the
- * stamina scaling instead, and Strength and Arcane are waiting on the weapon and
- * magic layers — they are registered and shown, but nothing reads them yet.
+ * <p>Only Constitution has anything to express <em>here</em>, which is not the same
+ * as being the only stat that does anything. A stat earns an attribute modifier only
+ * when its effect is a standing change to the character; the others are applied at
+ * the point of use instead, because that is where a whole-number config value can
+ * still express a slight per-point effect without rounding it away. Agility goes
+ * through {@link StaminaScaling} and Arcane through {@link ArcaneScaling}.
+ *
+ * <p>Strength alone is still inert: it is registered and shown, and waits on the
+ * weapon layer to give it something to scale.
  *
  * <p>Each effect carries its own {@link Identifier}, distinct from the eight
  * {@code CombatController} owns, so a stat bonus composes with a rolled stat or a

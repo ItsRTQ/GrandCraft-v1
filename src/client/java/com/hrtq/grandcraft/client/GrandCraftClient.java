@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.client;
 
+import com.hrtq.grandcraft.client.hud.ManaBarElement;
 import com.hrtq.grandcraft.client.hud.StaminaBarElement;
 import com.hrtq.grandcraft.client.render.LifeEssenceOrbRenderer;
 import com.hrtq.grandcraft.client.render.ZombieHumanRenderer;
@@ -14,6 +15,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudStatusBarHeightRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 import net.minecraft.util.Util;
 
 public class GrandCraftClient implements ClientModInitializer {
@@ -34,6 +36,10 @@ public class GrandCraftClient implements ClientModInitializer {
 		EntityRendererRegistry.register(GrandCraftEntities.ZOMBIE_HUMAN, ZombieHumanRenderer::new);
 		EntityRendererRegistry.register(GrandCraftEntities.LIFE_ESSENCE_ORB, LifeEssenceOrbRenderer::new);
 
+		// Vanilla's own item-sprite projectile renderer, which is the whole of "use the
+		// wind charge sprite": the entity reports that item and this draws it.
+		EntityRendererRegistry.register(GrandCraftEntities.GUST, ThrownItemRenderer::new);
+
 		// Attached to the food bar so the stamina bar inherits vanilla's own rule for
 		// when status bars are shown, and declared as a right-hand row so the air bar
 		// moves up rather than drawing over it. Both registries freeze once the client
@@ -42,6 +48,16 @@ public class GrandCraftClient implements ClientModInitializer {
 				VanillaHudElements.FOOD_BAR, StaminaBarElement.ID, new StaminaBarElement());
 		HudStatusBarHeightRegistry.addRight(
 				StaminaBarElement.ID, player -> StaminaBarElement.reservedHeight());
+
+		// Mana rides the stamina bar's layer for the same reason stamina rides the
+		// food bar's. The right-hand column stacks upward from the food bar, so
+		// attaching after stamina puts mana one row *above* it — there is no room
+		// below, and moving the confirmed-working stamina element to swap them would
+		// be a regression risk for no mechanical gain.
+		HudElementRegistry.attachElementAfter(
+				StaminaBarElement.ID, ManaBarElement.ID, new ManaBarElement());
+		HudStatusBarHeightRegistry.addRight(
+				ManaBarElement.ID, player -> ManaBarElement.reservedHeight());
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.level == null) {

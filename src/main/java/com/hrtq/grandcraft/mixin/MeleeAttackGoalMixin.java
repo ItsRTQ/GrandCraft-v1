@@ -93,7 +93,7 @@ public abstract class MeleeAttackGoalMixin {
 			return;
 		}
 
-		if (controller.canStartAttack(profile) && this.canPerformAttack(target)) {
+		if (controller.canStartAttack(this.mob, profile) && this.canPerformAttack(target)) {
 			controller.beginAttack(this.mob, profile);
 
 			// Deliberately no swing here. An earlier version telegraphed the wind-up

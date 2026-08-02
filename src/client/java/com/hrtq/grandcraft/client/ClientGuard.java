@@ -56,12 +56,7 @@ public final class ClientGuard {
 	/** Sends the edges of a hold, and re-asserts it while it lasts. */
 	public static void tick(Minecraft client) {
 		if (!wantsGuard(client)) {
-			if (holding) {
-				holding = false;
-				keepalive = 0;
-				ClientPlayNetworking.send(new GuardPayload(false));
-			}
-
+			sendRelease();
 			return;
 		}
 
@@ -81,6 +76,44 @@ public final class ClientGuard {
 			keepalive = CombatConstants.GUARD_KEEPALIVE_TICKS;
 			ClientPlayNetworking.send(new GuardPayload(true));
 		}
+	}
+
+	/**
+	 * Sends a guard release that is due but has not gone out yet, so an attack later
+	 * in this same tick reaches the server behind it rather than in front of it.
+	 *
+	 * <h2>The race this exists to lose deliberately</h2>
+	 * {@link #tick} runs at the end of the client tick, on purpose — that is what
+	 * leaves the press to vanilla. But {@code Minecraft.handleKeybinds} runs
+	 * <em>earlier</em> in the same tick, so a player who lets go of the guard and
+	 * clicks in one motion sends the attack first and the release second. The server
+	 * then sees the attack arrive while the guard is still up, refuses it because a
+	 * raised guard is a commitment, and the click is swallowed rather than queued.
+	 * That reads as "dropping the guard has a delay", when in fact the first click
+	 * after a release was being thrown away entirely.
+	 *
+	 * <p>This does <strong>not</strong> let anyone attack out of a guard they are
+	 * still holding: it sends nothing unless {@link #wantsGuard} has already gone
+	 * false, which means the key is genuinely up. A player still holding the button
+	 * gets the refusal they should.
+	 */
+	public static void releaseBeforeAttack(Minecraft client) {
+		if (wantsGuard(client)) {
+			return;
+		}
+
+		sendRelease();
+	}
+
+	/** Drops the latch and tells the server, if there is anything to drop. */
+	private static void sendRelease() {
+		if (!holding) {
+			return;
+		}
+
+		holding = false;
+		keepalive = 0;
+		ClientPlayNetworking.send(new GuardPayload(false));
 	}
 
 	/**

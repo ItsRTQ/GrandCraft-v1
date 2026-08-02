@@ -54,4 +54,16 @@ public record CombatProfile(
 	public boolean usesBlock() {
 		return this.actor.has(CombatVerb.BLOCK) && this.block.enabled();
 	}
+
+	/**
+	 * Whether this actor's attack timing and cost come from what it is holding.
+	 *
+	 * <p>No runtime half to combine with, unlike the three above: an actor holding
+	 * nothing the weapon tags claim already resolves to
+	 * {@link WeaponCategory#UNARMED}, whose defaults are this profile's own values, so
+	 * there is nothing a config switch would need to turn off.
+	 */
+	public boolean usesWeapons() {
+		return this.actor.has(CombatVerb.WEAPONS);
+	}
 }

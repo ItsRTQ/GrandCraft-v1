@@ -6,6 +6,8 @@ import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.player.PlayerClass;
 import com.hrtq.grandcraft.progression.EssenceAwards;
 import com.hrtq.grandcraft.stats.PlayerStats;
+import com.hrtq.grandcraft.progression.EssenceProgress;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
@@ -25,6 +27,19 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.phys.Vec3;
 
 public final class GrandCraftCommands {
+	/**
+	 * Bound on {@code /grandcraft set essence}. Not a design ceiling on levelling —
+	 * nothing else caps it — but the level loop runs once per level, so an argument
+	 * with no upper bound would let a typo hang the server thread.
+	 */
+	private static final int MAX_SET_LEVEL = 1000;
+
+	/**
+	 * Bound on {@code /grandcraft give essence}, for the same reason: awarding walks a
+	 * level at a time and each pass consumes at least one Essence.
+	 */
+	private static final int MAX_GIVE_ESSENCE = 1_000_000;
+
 	private GrandCraftCommands() {
 	}
 
@@ -45,6 +60,25 @@ public final class GrandCraftCommands {
 										.suggests(SUMMONABLE_MOBS)
 										.executes(context -> summon(context.getSource(),
 												StringArgumentType.getString(context, "mob")))))
+						// "set" replaces a value outright, "give" adds to one. Kept as two
+						// verbs rather than one flagged command because the difference is
+						// destructive: set wipes committed points, give never does.
+						.then(Commands.literal("set")
+								.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+								.then(Commands.literal("essence")
+										.then(Commands.argument("level", IntegerArgumentType.integer(0, MAX_SET_LEVEL))
+												.then(Commands.argument("player", EntityArgument.player())
+														.executes(context -> setEssenceLevel(context.getSource(),
+																EntityArgument.getPlayer(context, "player"),
+																IntegerArgumentType.getInteger(context, "level")))))))
+						.then(Commands.literal("give")
+								.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+								.then(Commands.literal("essence")
+										.then(Commands.argument("amount", IntegerArgumentType.integer(1, MAX_GIVE_ESSENCE))
+												.then(Commands.argument("player", EntityArgument.player())
+														.executes(context -> giveEssence(context.getSource(),
+																EntityArgument.getPlayer(context, "player"),
+																IntegerArgumentType.getInteger(context, "amount")))))))
 						.then(Commands.literal("reclass")
 								.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
 								.then(Commands.argument("player", EntityArgument.player())
@@ -98,6 +132,12 @@ public final class GrandCraftCommands {
 											ServerPlayer player = context.getSource().getPlayerOrException();
 											GrandCraftNetworking.sendLevelConfig(player);
 											return 1;
+										}))
+								.then(Commands.literal("weapons")
+										.executes(context -> {
+											ServerPlayer player = context.getSource().getPlayerOrException();
+											GrandCraftNetworking.sendWeaponConfig(player);
+											return 1;
 										})))));
 	}
 
@@ -109,6 +149,49 @@ public final class GrandCraftCommands {
 	 * spawn eggs and no natural spawning, not to reimplement a command that already
 	 * works.
 	 */
+	/**
+	 * Puts a character at an exact Essence Power level, with that level's worth of
+	 * points unspent.
+	 *
+	 * <p>Rebuilds rather than adjusts — see {@link EssenceAwards#setLevel}. Anything
+	 * already committed to a stat is cleared, which is why the attributes are rewritten
+	 * straight afterwards: stats are derived from class plus spent points, so leaving
+	 * the old values in place would describe a character who no longer exists. Exactly
+	 * the pass {@code reclass} makes for the same reason.
+	 */
+	private static int setEssenceLevel(CommandSourceStack source, ServerPlayer target, int level) {
+		EssenceAwards.setLevel(target, level);
+		PlayerStats.applyBaselines(target);
+
+		EssenceProgress progress = EssenceAwards.progressOf(target);
+
+		source.sendSuccess(() -> Component.translatable("commands.grandcraft.set_essence.success",
+				target.getDisplayName(), level, progress.statPoints(), progress.poolPoints()), true);
+		return 1;
+	}
+
+	/**
+	 * Awards Essence as though it had been picked up, levelling the character as far as
+	 * it pays for.
+	 *
+	 * <p>The amount is in <strong>Essence, not orbs</strong>. Orbs are worth one to
+	 * three each, so an orb count would be a random amount of progress — no use in a
+	 * command whose whole point is reaching a known state. This runs through the same
+	 * {@code award} path a pickup does, so levels, points and the announcement behave
+	 * exactly as they would in play.
+	 *
+	 * <p>Unlike {@code set}, this is purely additive: banked Essence and committed
+	 * points are left alone, so the attributes do not need rewriting.
+	 */
+	private static int giveEssence(CommandSourceStack source, ServerPlayer target, int amount) {
+		EssenceAwards.award(target, amount);
+
+		source.sendSuccess(() -> Component.translatable("commands.grandcraft.give_essence.success",
+				amount, target.getDisplayName(),
+				EssenceAwards.progressOf(target).level()), true);
+		return 1;
+	}
+
 	private static int summon(CommandSourceStack source, String name) throws CommandSyntaxException {
 		EntityType<?> type = GrandCraftEntities.summonable(name);
 

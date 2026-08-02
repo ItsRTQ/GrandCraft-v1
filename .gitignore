@@ -43,4 +43,8 @@ CLAUDE.md
 agent-memory/
 .claude/
 
-assets
+# The artist's source files at the repo root. Leading slash and trailing slash
+# are both load-bearing: a bare `assets` matches ANY directory of that name at
+# any depth, which silently ignored everything under
+# src/main/resources/assets/ as well.
+/assets/

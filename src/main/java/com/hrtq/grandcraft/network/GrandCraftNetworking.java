@@ -3,6 +3,8 @@ package com.hrtq.grandcraft.network;
 import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.CombatTuning;
+import com.hrtq.grandcraft.combat.WeaponConfigFile;
+import com.hrtq.grandcraft.combat.WeaponTuning;
 import com.hrtq.grandcraft.config.GameConfigFile;
 import com.hrtq.grandcraft.config.GameTuning;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
@@ -69,6 +71,10 @@ public final class GrandCraftNetworking {
 				.register(SpendStatPointPayload.TYPE, SpendStatPointPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay()
 				.register(SpendPoolPointPayload.TYPE, SpendPoolPointPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(ApplyWeaponConfigPayload.TYPE, ApplyWeaponConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(OpenWeaponConfigPayload.TYPE, OpenWeaponConfigPayload.STREAM_CODEC);
 
 		registerClassSelection();
 		registerStatSpending();
@@ -77,6 +83,7 @@ public final class GrandCraftNetworking {
 		registerGameConfig();
 		registerStatConfig();
 		registerLevelConfig();
+		registerWeaponConfig();
 
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			ServerPlayer player = handler.getPlayer();
@@ -112,6 +119,15 @@ public final class GrandCraftNetworking {
 
 	public static void sendLevelConfig(ServerPlayer player) {
 		ServerPlayNetworking.send(player, new LevelConfigPayload(LevelTuning.current(), true));
+	}
+
+	/**
+	 * Weapon settings are server-held, so unlike the game, stat and level ones they
+	 * are not pushed on join — this is the only time they reach a client, and only
+	 * the admin who asked for the screen.
+	 */
+	public static void sendWeaponConfig(ServerPlayer player) {
+		ServerPlayNetworking.send(player, new OpenWeaponConfigPayload(WeaponTuning.current()));
 	}
 
 	private static void registerClassSelection() {
@@ -248,6 +264,29 @@ public final class GrandCraftNetworking {
 			CombatConfigFile.save(CombatTuning.current());
 
 			GrandCraft.LOGGER.info("{} updated combat tuning", player.getGameProfile().name());
+			player.sendSystemMessage(Component.translatable("commands.grandcraft.config.saved"));
+		});
+	}
+
+	private static void registerWeaponConfig() {
+		ServerPlayNetworking.registerGlobalReceiver(ApplyWeaponConfigPayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+
+			// As with the others: the command's permission guards the command, not
+			// this packet, which any connected client can send at any time.
+			if (!Commands.LEVEL_GAMEMASTERS.check(player.permissions())) {
+				GrandCraft.LOGGER.warn("{} tried to change weapon settings without permission",
+						player.getGameProfile().name());
+				return;
+			}
+
+			// set() clamps, so a hand-built packet cannot push a phase duration out of
+			// range and throw inside AttackProfile later, nor send a zero-tick hit
+			// window that could never connect.
+			WeaponTuning.set(payload.settings());
+			WeaponConfigFile.save(WeaponTuning.current());
+
+			GrandCraft.LOGGER.info("{} updated weapon tuning", player.getGameProfile().name());
 			player.sendSystemMessage(Component.translatable("commands.grandcraft.config.saved"));
 		});
 	}

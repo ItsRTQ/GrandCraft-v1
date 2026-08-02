@@ -12,6 +12,13 @@ import net.minecraft.util.StringRepresentable;
 /**
  * A character's class, and the stat spread it starts with.
  *
+ * <h2>Four archetypes, not four finished identities</h2>
+ * Warrior, Outlaw, Sorcerer and Cleric are deliberately broad starting points. A
+ * character narrows through play, not at the picker: class skill-lines unlocked by
+ * levelling are what separate two Warriors. So resist the urge to add a fifth class
+ * to express a playstyle — that is a skill-line's job, and a class list that grows
+ * to cover every fantasy is the shape this one replaced.
+ *
  * <h2>The baseline table</h2>
  * The four numbers on each constant are that class's starting Strength, Agility,
  * Constitution and Arcane. They live here, on the constant, so the class list and
@@ -22,23 +29,28 @@ import net.minecraft.util.StringRepresentable;
  * character is measurably worse off than a classed one in every direction. That is
  * the intent: picking a class should be a step up, not a sideways move.
  *
- * <p>These numbers are provisional. The classes themselves are expected to change
- * before release, and this table is the only place to change them.
+ * <p>The four classed spreads each total 44, so no class is simply stronger than
+ * another; they differ only in where the points sit. Note that Strength and Arcane
+ * are still inert, so today a class is <em>felt</em> only through Constitution and
+ * Agility — the spreads are written for the finished game, not for what currently
+ * reads them.
+ *
+ * <p>These numbers are provisional, and this table is the only place to change them.
  */
 public enum PlayerClass implements StringRepresentable {
 	//                            STR AGI CON ARC
 	PEASANT("peasant", new StatBlock(5, 5, 5, 5)),
-	ARCANIST("arcanist", new StatBlock(7, 10, 9, 15)),
-	TEMPLAR("templar", new StatBlock(13, 10, 14, 8)),
-	WITCH("witch", new StatBlock(7, 13, 9, 14)),
-	RITUALIST("ritualist", new StatBlock(8, 11, 11, 13)),
-	MERCENARY("mercenary", new StatBlock(14, 12, 13, 6));
+	WARRIOR("warrior", new StatBlock(14, 10, 14, 6)),
+	OUTLAW("outlaw", new StatBlock(10, 15, 11, 8)),
+	SORCERER("sorcerer", new StatBlock(7, 11, 10, 16)),
+	CLERIC("cleric", new StatBlock(9, 10, 12, 13));
 
 	public static final Codec<PlayerClass> CODEC = StringRepresentable.fromEnum(PlayerClass::values);
 	public static final StreamCodec<ByteBuf, PlayerClass> STREAM_CODEC =
 			ByteBufCodecs.STRING_UTF8.map(PlayerClass::byId, PlayerClass::getSerializedName);
 
-	public static final List<PlayerClass> SELECTABLE = List.of(ARCANIST, TEMPLAR, WITCH, RITUALIST, MERCENARY);
+	/** The classes a player may pick, in the order the picker lists them. */
+	public static final List<PlayerClass> SELECTABLE = List.of(WARRIOR, OUTLAW, SORCERER, CLERIC);
 
 	private final String id;
 	private final StatBlock baseStats;
@@ -73,5 +85,16 @@ public enum PlayerClass implements StringRepresentable {
 
 	public Component displayName() {
 		return Component.translatable("class.grandcraft." + this.id);
+	}
+
+	/**
+	 * A line or two on how this class plays, shown while browsing the class picker.
+	 *
+	 * <p>Alongside {@link #displayName()} so the {@code class.grandcraft.<id>} key
+	 * convention lives in one place rather than being rebuilt by string concatenation
+	 * wherever a class is drawn.
+	 */
+	public Component description() {
+		return Component.translatable("class.grandcraft." + this.id + ".description");
 	}
 }

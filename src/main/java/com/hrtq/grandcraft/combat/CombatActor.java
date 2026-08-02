@@ -29,7 +29,8 @@ public enum CombatActor {
 	 * layer to hide a server-side delay behind.
 	 */
 	PLAYER("player", Player.class,
-			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK),
+			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK,
+					CombatVerb.WEAPONS),
 			new ActorSettings(
 					0, CombatConstants.DEFAULT_ACTIVE_TICKS, 3, 4,
 					StatRange.of(1.0),

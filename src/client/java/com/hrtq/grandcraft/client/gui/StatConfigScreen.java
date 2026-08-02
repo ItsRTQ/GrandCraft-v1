@@ -45,6 +45,9 @@ public class StatConfigScreen extends Screen {
 	private TunableField healthPerPoolPoint;
 	private TunableField staminaPerPoolPoint;
 	private TunableField manaPerPoolPoint;
+	private TunableField spellDamagePerArcane;
+	private TunableField spellCooldownPerArcane;
+	private TunableField manaRegenMinArcane;
 
 	/** What the fields held before a rebuild, so a resize does not discard edits. */
 	private StatSettings working;
@@ -104,7 +107,17 @@ public class StatConfigScreen extends Screen {
 
 		this.manaPerPoolPoint = unit(seed.manaPerPoolPoint(),
 				StatSettings.MAX_PER_POOL_POINT, "mana_points");
-		addRow(grid, row, "mana_per_pool_point", this.manaPerPoolPoint);
+		row = addRow(grid, row, "mana_per_pool_point", this.manaPerPoolPoint);
+
+		this.spellDamagePerArcane = percent(seed.spellDamagePerArcane());
+		row = addRow(grid, row, "spell_damage_per_arcane", this.spellDamagePerArcane);
+
+		this.spellCooldownPerArcane = percent(seed.spellCooldownPerArcane());
+		row = addRow(grid, row, "spell_cooldown_per_arcane", this.spellCooldownPerArcane);
+
+		this.manaRegenMinArcane = unit(seed.manaRegenMinArcane(),
+				StatSettings.MAX_MANA_REGEN_MIN_ARCANE, "points");
+		addRow(grid, row, "mana_regen_min_arcane", this.manaRegenMinArcane);
 
 		root.addChild(grid);
 		root.addChild(buildButtons());
@@ -179,7 +192,10 @@ public class StatConfigScreen extends Screen {
 				this.manaRegenDelayTicks.intValue(),
 				this.healthPerPoolPoint.intValue(),
 				this.staminaPerPoolPoint.intValue(),
-				this.manaPerPoolPoint.intValue());
+				this.manaPerPoolPoint.intValue(),
+				this.spellDamagePerArcane.intValue(),
+				this.spellCooldownPerArcane.intValue(),
+				this.manaRegenMinArcane.intValue());
 	}
 
 	/** Back to the mod's defaults, not to what the screen opened with. */

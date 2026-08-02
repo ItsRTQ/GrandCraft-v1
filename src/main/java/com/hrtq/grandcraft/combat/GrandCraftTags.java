@@ -22,6 +22,14 @@ public final class GrandCraftTags {
 	 * judgement about the game, not a fact about the item, and a datapack can widen or
 	 * narrow it without touching this code. The default is in
 	 * {@code data/grandcraft/tags/item/guard_implements.json}.
+	 *
+	 * <p><strong>Its default is now the union of the three melee
+	 * {@link WeaponCategory} tags</strong> rather than a hand-written list. That is
+	 * what makes "an arcane implement cannot guard" structurally true instead of
+	 * coincidental: the staff is excluded because it is arcane, and cannot drift back
+	 * in when someone edits one file and forgets the other. It stays a separate tag
+	 * because it answers a different question — a datapack may still want a guard
+	 * implement that is not a weapon, or a weapon you cannot guard with.
 	 */
 	public static final TagKey<Item> GUARD_IMPLEMENTS =
 			TagKey.create(Registries.ITEM, GrandCraft.id("guard_implements"));

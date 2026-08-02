@@ -4,12 +4,14 @@ import com.hrtq.grandcraft.client.gui.CombatConfigScreen;
 import com.hrtq.grandcraft.client.gui.GameConfigScreen;
 import com.hrtq.grandcraft.client.gui.LevelConfigScreen;
 import com.hrtq.grandcraft.client.gui.StatConfigScreen;
+import com.hrtq.grandcraft.client.gui.WeaponConfigScreen;
 import com.hrtq.grandcraft.network.AttackLockoutPayload;
 import com.hrtq.grandcraft.network.CombatPhasePayload;
 import com.hrtq.grandcraft.network.GameConfigPayload;
 import com.hrtq.grandcraft.network.LevelConfigPayload;
 import com.hrtq.grandcraft.network.ManaPayload;
 import com.hrtq.grandcraft.network.OpenCombatConfigPayload;
+import com.hrtq.grandcraft.network.OpenWeaponConfigPayload;
 import com.hrtq.grandcraft.network.StaminaPayload;
 import com.hrtq.grandcraft.network.StatConfigPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -24,6 +26,11 @@ public final class GrandCraftClientNetworking {
 				// Handlers already run on the client thread, so the screen can be
 				// opened directly.
 				context.client().setScreenAndShow(new CombatConfigScreen(payload.settings())));
+
+		// No client-side copy to keep: weapon settings are server-held, so this packet
+		// only ever opens a screen for the admin who asked for it.
+		ClientPlayNetworking.registerGlobalReceiver(OpenWeaponConfigPayload.TYPE, (payload, context) ->
+				context.client().setScreenAndShow(new WeaponConfigScreen(payload.settings())));
 
 		ClientPlayNetworking.registerGlobalReceiver(AttackLockoutPayload.TYPE, (payload, context) ->
 				ClientAttackLockout.begin(payload.ticks(), Util.getMillis()));

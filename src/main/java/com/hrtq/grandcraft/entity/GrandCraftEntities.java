@@ -56,6 +56,25 @@ public final class GrandCraftEntities {
 					.clientTrackingRange(6)
 					.updateInterval(20));
 
+	/**
+	 * The staff's default attack.
+	 *
+	 * <p>Registered through {@link #register} rather than
+	 * {@link #registerSummonable}: it is a projectile rather than a mob, and the
+	 * narrow {@code /grandcraft summon} exists for things with no other way to be
+	 * reached. Vanilla's own {@code /summon} still works on it, which is how it is
+	 * tested before the staff can fire one.
+	 *
+	 * <p>A shorter tracking range and a faster update interval than the essence orb:
+	 * this moves at 1.5 blocks a tick, so a 20-tick update would have clients
+	 * extrapolating a straight line for a whole second of flight.
+	 */
+	public static final EntityType<GustProjectile> GUST =
+			register("gust", EntityType.Builder.<GustProjectile>of(GustProjectile::new, MobCategory.MISC)
+					.sized(0.3F, 0.3F)
+					.clientTrackingRange(4)
+					.updateInterval(10));
+
 	private GrandCraftEntities() {
 	}
 

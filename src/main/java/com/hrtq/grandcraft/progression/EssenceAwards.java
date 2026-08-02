@@ -2,6 +2,8 @@ package com.hrtq.grandcraft.progression;
 
 import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import com.hrtq.grandcraft.stats.PoolBlock;
+import com.hrtq.grandcraft.stats.StatBlock;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
@@ -105,6 +107,46 @@ public final class EssenceAwards {
 			announce(player, level,
 					statPoints - before.statPoints(),
 					poolPoints - before.poolPoints());
+		}
+	}
+
+	/**
+	 * Rebuilds a character's progression at an exact level, with every point that
+	 * reaching it would have granted left unspent.
+	 *
+	 * <p>Lives here rather than in the command that calls it so this class stays what
+	 * its own header claims: the only place a level is granted. A second implementation
+	 * of "what does level N owe you" is exactly the drift that warning is about.
+	 *
+	 * <p><strong>This is a rebuild, not an adjustment.</strong> Banked Essence and every
+	 * point already committed to a stat are cleared, and the level's worth of points is
+	 * handed back unspent — which is what "set" should mean, and what makes the result
+	 * identical whether the target was above the level, below it, or fresh. It also
+	 * keeps the character consistent: the caller rewrites the attributes afterwards, and
+	 * stats are derived from class plus spent points, so leaving old spends behind would
+	 * describe a character who had never existed.
+	 *
+	 * @param level the level to sit at; 0 wipes progression back to nothing
+	 */
+	public static void setLevel(ServerPlayer player, int level) {
+		LevelSettings settings = LevelTuning.current();
+		int statPoints = 0;
+		int poolPoints = 0;
+
+		// Walked one level at a time rather than multiplied out, because the pool award
+		// is a milestone that only lands on some levels — the interval is configurable,
+		// so there is no closed form to trust.
+		for (int reached = 1; reached <= level; reached++) {
+			statPoints += settings.statPointsPerLevel();
+			poolPoints += settings.poolPointsFor(reached);
+		}
+
+		player.setAttached(GrandCraftAttachments.ESSENCE_PROGRESS,
+				new EssenceProgress(0, level, statPoints, poolPoints,
+						StatBlock.NONE, PoolBlock.NONE));
+
+		if (level > 0) {
+			announce(player, level, statPoints, poolPoints);
 		}
 	}
 
