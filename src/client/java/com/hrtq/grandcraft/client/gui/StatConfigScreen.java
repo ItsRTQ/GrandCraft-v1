@@ -48,6 +48,7 @@ public class StatConfigScreen extends Screen {
 	private TunableField spellDamagePerArcane;
 	private TunableField spellCooldownPerArcane;
 	private TunableField manaRegenMinArcane;
+	private TunableField meleeDamagePerPoint;
 
 	/** What the fields held before a rebuild, so a resize does not discard edits. */
 	private StatSettings working;
@@ -117,7 +118,14 @@ public class StatConfigScreen extends Screen {
 
 		this.manaRegenMinArcane = unit(seed.manaRegenMinArcane(),
 				StatSettings.MAX_MANA_REGEN_MIN_ARCANE, "points");
-		addRow(grid, row, "mana_regen_min_arcane", this.manaRegenMinArcane);
+		row = addRow(grid, row, "mana_regen_min_arcane", this.manaRegenMinArcane);
+
+		// The steepest rate on this screen by a wide margin, and the one that decides how
+		// much of a fight is the character and how much is the weapon. Priced against a
+		// weapon's requirement rather than against neutral, unlike everything above it —
+		// which is why its tooltip has to say so.
+		this.meleeDamagePerPoint = percent(seed.meleeDamagePerPoint());
+		addRow(grid, row, "melee_damage_per_point", this.meleeDamagePerPoint);
 
 		root.addChild(grid);
 		root.addChild(buildButtons());
@@ -195,7 +203,8 @@ public class StatConfigScreen extends Screen {
 				this.manaPerPoolPoint.intValue(),
 				this.spellDamagePerArcane.intValue(),
 				this.spellCooldownPerArcane.intValue(),
-				this.manaRegenMinArcane.intValue());
+				this.manaRegenMinArcane.intValue(),
+				this.meleeDamagePerPoint.intValue());
 	}
 
 	/** Back to the mod's defaults, not to what the screen opened with. */

@@ -4,6 +4,7 @@ import com.hrtq.grandcraft.client.ClientCombatPhases;
 import com.hrtq.grandcraft.combat.CombatState;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import net.minecraft.util.Ease;
 
 /**
  * The first-person half of a dodge.
@@ -14,9 +15,8 @@ import com.mojang.math.Axis;
  * teleport: the invulnerability works, the stamina goes, and nothing on screen says
  * anything happened.
  *
- * <p>Directional, and driven by the same curve as {@link DodgeStep} so the camera
- * and the body are always doing the same thing at the same moment. Stepping the way
- * you are looking dips the view; stepping sideways rolls it. Without splitting them
+ * <p>Directional. Stepping the way you are looking dips the view; stepping sideways
+ * rolls it. Without splitting them
  * that way every dodge feels identical regardless of which one you chose, which
  * wastes the only feedback a first-person player gets about a decision they just
  * made under pressure.
@@ -32,6 +32,15 @@ public final class DodgeCamera {
 
 	/** Degrees the view rolls when stepping across it. */
 	private static final float TILT_DEGREES = 13.0F;
+
+	/**
+	 * Fraction of the whole dodge the camera move occupies. The rest of the dodge is
+	 * spent level and still moving — which is what makes it a step rather than a pose.
+	 */
+	private static final float SPAN = 0.45F;
+
+	/** Fraction of that window spent snapping in, as opposed to releasing. */
+	private static final float ATTACK = 0.22F;
 
 	private DodgeCamera() {
 	}
@@ -50,7 +59,7 @@ public final class DodgeCamera {
 			return;
 		}
 
-		float amount = DodgeStep.leanFraction(phase, ClientCombatPhases.progressOf(entityId, nowMillis));
+		float amount = amount(phase, ClientCombatPhases.progressOf(entityId, nowMillis));
 
 		if (amount == 0.0F) {
 			return;
@@ -67,5 +76,44 @@ public final class DodgeCamera {
 
 		poseStack.mulPose(Axis.XP.rotationDegrees(amount * DIP_DEGREES * along));
 		poseStack.mulPose(Axis.ZP.rotationDegrees(amount * TILT_DEGREES * across));
+	}
+
+	/**
+	 * How far into the camera move the dodge is, from 0 to 1.
+	 *
+	 * <p>Measured across the dodge as a whole rather than per phase, so the view does
+	 * not kink at the handover from invulnerable to recovering. The two halves are
+	 * assumed equal, for the same reason {@link DodgeAnimation} assumes it.
+	 *
+	 * <p>The move is deliberately <em>over well before the dodge is</em>. A step is a
+	 * push off, not a pose held for the duration: the view snaps into it in a couple of
+	 * ticks and is level again while the player is still travelling and still
+	 * committed. Stretching it across the whole window turned a step into a drift.
+	 *
+	 * <p>This curve used to live in {@code DodgeStep} and drove the third-person lean
+	 * as well, so that the camera and the body agreed. The body now takes its shape
+	 * from the animator's clip instead, and this stayed behind — first person has no
+	 * authored pose to follow, and this is tuned rather than merely inherited. Nausea
+	 * is the constraint here and silhouette is the constraint there; they no longer
+	 * have a reason to be the same number.
+	 */
+	private static float amount(CombatState phase, float progress) {
+		float t = Math.clamp(progress, 0.0F, 1.0F) * 0.5F;
+
+		if (phase != CombatState.DODGE_ACTIVE) {
+			t += 0.5F;
+		}
+
+		if (t >= SPAN) {
+			return 0.0F;
+		}
+
+		float u = t / SPAN;
+
+		// Snap in, ease out. The asymmetry is the whole character of the move — an even
+		// curve in and out is a sway.
+		return u < ATTACK
+				? Ease.outQuart(u / ATTACK)
+				: 1.0F - Ease.inOutCubic((u - ATTACK) / (1.0F - ATTACK));
 	}
 }

@@ -8,6 +8,7 @@
 		"EntityRendererMixin",
 		"ExampleClientMixin",
 		"GameRendererCombatCameraMixin",
+		"ItemStackAttributeTooltipMixin",
 		"LivingEntityRenderStateMixin",
 		"LivingEntityRendererDodgeMixin",
 		"LivingEntityRendererExtractMixin",

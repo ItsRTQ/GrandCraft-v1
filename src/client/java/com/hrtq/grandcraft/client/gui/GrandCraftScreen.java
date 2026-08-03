@@ -535,8 +535,10 @@ public class GrandCraftScreen extends Screen {
 					signed(settings.armourBonus(value)),
 					signed(settings.healthBonus(value)),
 					percent(settings.staminaRegenMultiplier(value)));
-			// Strength and Arcane are registered and shown but drive nothing yet, and
-			// their tooltips say so rather than implying an effect nobody could find.
+			// Strength and Arcane describe their effects in prose rather than with live
+			// figures, because what either is worth depends on the weapon in hand — a
+			// claymore reads Strength alone, a sword only partly. The honest place for a
+			// number is the item tooltip, which knows which weapon is being asked about.
 			default -> Component.translatable(path);
 		};
 	}

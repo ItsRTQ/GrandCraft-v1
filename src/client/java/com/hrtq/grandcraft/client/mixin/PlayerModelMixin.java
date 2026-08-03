@@ -2,6 +2,7 @@ package com.hrtq.grandcraft.client.mixin;
 
 import com.hrtq.grandcraft.client.ClientGameSettings;
 import com.hrtq.grandcraft.client.render.CombatPoseState;
+import com.hrtq.grandcraft.client.render.DodgeAnimation;
 import com.hrtq.grandcraft.client.render.HumanoidCombatPose;
 import com.hrtq.grandcraft.combat.CombatState;
 import net.minecraft.client.model.HumanoidModel;
@@ -57,8 +58,19 @@ public abstract class PlayerModelMixin {
 		// HumanoidModel, and @Shadow only resolves members of the target class.
 		HumanoidModel<?> model = (HumanoidModel<?>) (Object) this;
 
+		float progress = ((CombatPoseState) state).grandcraft$phaseProgress();
+
+		// The dodge is the one phase drawn from an authored clip rather than from a
+		// procedural posture, so it takes the whole rig — legs included — instead of
+		// the three parts the postures move. HumanoidCombatPose deliberately blends to
+		// zero for the dodge phases, so the two never both apply.
+		if (phase.isDodge()) {
+			DodgeAnimation.apply(model, phase, progress,
+					((CombatPoseState) state).grandcraft$travelYaw(), state.bodyRot);
+			return;
+		}
+
 		HumanoidCombatPose.apply(model.head, model.rightArm, model.leftArm,
-				phase, ((CombatPoseState) state).grandcraft$phaseProgress(),
-				HumanoidCombatPose.guardArmOf(state));
+				phase, progress, HumanoidCombatPose.guardArmOf(state));
 	}
 }

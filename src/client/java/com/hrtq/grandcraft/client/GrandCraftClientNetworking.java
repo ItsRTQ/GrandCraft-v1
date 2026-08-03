@@ -11,9 +11,9 @@ import com.hrtq.grandcraft.network.GameConfigPayload;
 import com.hrtq.grandcraft.network.LevelConfigPayload;
 import com.hrtq.grandcraft.network.ManaPayload;
 import com.hrtq.grandcraft.network.OpenCombatConfigPayload;
-import com.hrtq.grandcraft.network.OpenWeaponConfigPayload;
 import com.hrtq.grandcraft.network.StaminaPayload;
 import com.hrtq.grandcraft.network.StatConfigPayload;
+import com.hrtq.grandcraft.network.WeaponConfigPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.util.Util;
 
@@ -27,10 +27,16 @@ public final class GrandCraftClientNetworking {
 				// opened directly.
 				context.client().setScreenAndShow(new CombatConfigScreen(payload.settings())));
 
-		// No client-side copy to keep: weapon settings are server-held, so this packet
-		// only ever opens a screen for the admin who asked for it.
-		ClientPlayNetworking.registerGlobalReceiver(OpenWeaponConfigPayload.TYPE, (payload, context) ->
-				context.client().setScreenAndShow(new WeaponConfigScreen(payload.settings())));
+		ClientPlayNetworking.registerGlobalReceiver(WeaponConfigPayload.TYPE, (payload, context) -> {
+			// Same double duty as the game and stat settings below: every client needs
+			// the values to draw its weapon tooltips, and only the admin who asked gets
+			// the screen.
+			ClientWeaponSettings.set(payload.settings());
+
+			if (payload.openScreen()) {
+				context.client().setScreenAndShow(new WeaponConfigScreen(payload.settings()));
+			}
+		});
 
 		ClientPlayNetworking.registerGlobalReceiver(AttackLockoutPayload.TYPE, (payload, context) ->
 				ClientAttackLockout.begin(payload.ticks(), Util.getMillis()));

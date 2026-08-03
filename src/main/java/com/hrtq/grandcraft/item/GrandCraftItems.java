@@ -1,6 +1,8 @@
 package com.hrtq.grandcraft.item;
 
 import com.hrtq.grandcraft.GrandCraft;
+import com.hrtq.grandcraft.stats.CharacterStat;
+import com.hrtq.grandcraft.stats.WeaponRequirement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -38,14 +40,23 @@ import net.minecraft.world.item.component.Weapon;
  * and to a sword from a mod this one has never heard of — so they belong to the
  * weapon category and its config, not to any one item.
  *
- * <h2>Do not tune a heavy weapon by making it slow</h2>
- * {@code Player.attack} still scales damage by the vanilla attack cooldown while
- * {@code PlayerAttackStrengthMixin} replaces the client-side indicator outright, so
- * the crosshair and the server already disagree for part of every cycle. A slower
- * weapon widens that window, and the symptom is "it sometimes does no damage".
- * The speeds below stay in a narrow band (1.4 / 1.6 / 1.8 against the iron sword's
- * 1.6) and the categories differentiate through endlag instead. Revisit the whole
- * table the day the {@code ATTACK_SPEED} modifier kills the vanilla cooldown.
+ * <h2>The damage numbers below are no longer the damage dealt</h2>
+ * {@code MeleeDamage} rebuilds a player's melee damage out of their stats: the item's
+ * {@code ATTACK_DAMAGE} is down-scaled to a low base and multiplied by what the
+ * character brings. So the figures here set a weapon's <em>place in the ladder</em>
+ * rather than its output — the claymore hits harder than the dagger because the number
+ * here is bigger, but how much harder is the holder's business.
+ *
+ * <p>They also decide what the weapon <em>demands</em>: a requirement is derived from
+ * this number for anything that does not state one. All three weapons here state one,
+ * because a weapon the mod ships should not have its gate move because someone retuned
+ * its damage.
+ *
+ * <p>Attack speed is now purely a rhythm control. It used to be dangerous to lower —
+ * vanilla scaled damage by the attack cooldown while the mod's own indicator showed
+ * something else, so a slow weapon widened the window where the crosshair and the
+ * server disagreed. {@code PlayerAttackMixin} deletes that curve, so the trap is gone;
+ * the band below is kept because it reads well, not because it has to be.
  */
 public final class GrandCraftItems {
 	/**
@@ -70,7 +81,8 @@ public final class GrandCraftItems {
 	public static final Item CLAYMORE = register("claymore", new Item.Properties()
 			.sword(ToolMaterial.IRON, 5.0F, -2.6F)
 			.durability(400)
-			.component(DataComponents.ATTACK_RANGE, reach(4.0F)));
+			.component(DataComponents.ATTACK_RANGE, reach(4.0F))
+			.component(GrandCraftComponents.WEAPON_REQUIREMENT, requires(CharacterStat.STRENGTH, 14)));
 
 	/**
 	 * Light: speed and cheapness.
@@ -84,7 +96,8 @@ public final class GrandCraftItems {
 	public static final Item DAGGER = register("dagger", new Item.Properties()
 			.sword(ToolMaterial.IRON, 2.0F, -2.2F)
 			.durability(180)
-			.component(DataComponents.ATTACK_RANGE, reach(2.4F)));
+			.component(DataComponents.ATTACK_RANGE, reach(2.4F))
+			.component(GrandCraftComponents.WEAPON_REQUIREMENT, requires(CharacterStat.AGILITY, 12)));
 
 	/**
 	 * Arcane: the caster's implement.
@@ -107,6 +120,7 @@ public final class GrandCraftItems {
 			.durability(250)
 			.enchantable(15)
 			.component(DataComponents.WEAPON, new Weapon(1))
+			.component(GrandCraftComponents.WEAPON_REQUIREMENT, requires(CharacterStat.ARCANE, 12))
 			.attributes(ItemAttributeModifiers.builder()
 					.add(Attributes.ATTACK_DAMAGE,
 							new AttributeModifier(Item.BASE_ATTACK_DAMAGE_ID, 2.0,
@@ -162,6 +176,20 @@ public final class GrandCraftItems {
 	 */
 	private static AttackRange reach(float blocks) {
 		return new AttackRange(0.0F, blocks, 0.0F, blocks, 0.0F, 1.0F);
+	}
+
+	/**
+	 * What a character needs before this weapon works properly in their hands.
+	 *
+	 * <p>Stated rather than derived for all three of the mod's weapons, so that retuning
+	 * a damage number never silently moves a gate. The stat named here should always be
+	 * the one its category actually scales off, or the weapon demands one thing and
+	 * rewards another.
+	 *
+	 * <p>Baked at registration like {@link #reach}, so it costs a rebuild to change.
+	 */
+	private static WeaponRequirement requires(CharacterStat stat, int value) {
+		return new WeaponRequirement(stat, value);
 	}
 
 	private static Item register(String name, Item.Properties properties) {

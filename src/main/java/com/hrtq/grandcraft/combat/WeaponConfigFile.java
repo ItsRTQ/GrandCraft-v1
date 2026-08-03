@@ -24,6 +24,9 @@ import net.fabricmc.loader.api.FabricLoader;
  */
 public final class WeaponConfigFile {
 	private static final String FILE_NAME = "grandcraft-weapons.json";
+
+	/** The one top-level key that is not a {@link WeaponCategory} id. */
+	private static final String RULES_KEY = "rules";
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private WeaponConfigFile() {
@@ -67,6 +70,11 @@ public final class WeaponConfigFile {
 						.encodeStart(JsonOps.INSTANCE, settings.forCategory(category)).getOrThrow());
 			}
 
+			// Not a category, so it cannot collide with one: every category key is a
+			// WeaponCategory id and none of them is "rules".
+			root.add(RULES_KEY, WeaponRules.codec(WeaponRules.DEFAULT)
+					.encodeStart(JsonOps.INSTANCE, settings.rules()).getOrThrow());
+
 			Files.createDirectories(path.getParent());
 			Files.writeString(path, GSON.toJson(root));
 		} catch (IOException | RuntimeException exception) {
@@ -104,6 +112,22 @@ public final class WeaponConfigFile {
 			byCategory.put(category, parsed.orElseGet(category::defaults));
 		}
 
-		return new WeaponSettings(byCategory);
+		return new WeaponSettings(byCategory, decodeRules(root.get(RULES_KEY)));
+	}
+
+	/** Decoded independently of the categories, for the same reason they are of each other. */
+	private static WeaponRules decodeRules(JsonElement element) {
+		if (element == null) {
+			return WeaponRules.DEFAULT;
+		}
+
+		Optional<WeaponRules> parsed = WeaponRules.codec(WeaponRules.DEFAULT)
+				.parse(JsonOps.INSTANCE, element).result();
+
+		if (parsed.isEmpty()) {
+			GrandCraft.LOGGER.warn("Could not read shared weapon rules; using defaults");
+		}
+
+		return parsed.orElse(WeaponRules.DEFAULT);
 	}
 }

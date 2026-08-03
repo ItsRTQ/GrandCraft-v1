@@ -38,7 +38,10 @@ import net.minecraft.world.entity.ai.attributes.RangedAttribute;
  * class is what forces the registration to have happened by the time it is needed.
  */
 public final class GrandCraftAttributes {
-	/** Heavy weapons and, later, the size of the stamina pool. Nothing reads it yet. */
+	/**
+	 * Melee damage, through whatever is being swung — see {@code MeleeDamage}. Heavy weapons read
+	 * it almost exclusively, swords partly, and it gates most of them outright.
+	 */
 	public static final Holder<Attribute> STRENGTH = register("strength");
 
 	/** Lowers every stamina cost. Later: light weapons, medium armour, archery. */

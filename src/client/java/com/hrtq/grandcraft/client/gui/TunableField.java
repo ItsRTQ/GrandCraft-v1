@@ -30,6 +30,20 @@ public class TunableField extends EditBox {
 	private final int max;
 	private final int fallback;
 
+	/**
+	 * Told whenever the text changes, for a screen that draws something derived from
+	 * several fields at once.
+	 *
+	 * <p>A separate hook rather than letting callers use {@code setResponder}, because
+	 * the responder is already spoken for: replacing it would silently drop the
+	 * red-text validation, and that would show up as bad input being accepted rather
+	 * than as a missing callback.
+	 *
+	 * <p>Initialised to a no-op so the responder never has to null-check.
+	 */
+	private Runnable changeListener = () -> {
+	};
+
 	public TunableField(Font font, int width, int height, Component label,
 			int min, int max, int value) {
 		super(font, 0, 0, width, height, label);
@@ -44,9 +58,17 @@ public class TunableField extends EditBox {
 		setMaxLength(Integer.toString(max).length() + 2);
 		setValue(Integer.toString(value));
 
-		// Only recolours; deliberately never calls setValue, which would re-enter
-		// this responder through the box's own change notification.
-		setResponder(text -> setTextColor(isValid(text) ? VALID_COLOUR : INVALID_COLOUR));
+		// Only recolours and notifies; deliberately never calls setValue, which would
+		// re-enter this responder through the box's own change notification.
+		setResponder(text -> {
+			setTextColor(isValid(text) ? VALID_COLOUR : INVALID_COLOUR);
+			this.changeListener.run();
+		});
+	}
+
+	/** @param listener run after every edit; must not write back to this field. */
+	public void setChangeListener(Runnable listener) {
+		this.changeListener = listener;
 	}
 
 	/** Out of range counts as invalid, so a value that would be clamped shows as one. */

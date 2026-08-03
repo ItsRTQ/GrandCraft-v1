@@ -1,10 +1,13 @@
 package com.hrtq.grandcraft.client;
 
+import com.hrtq.grandcraft.client.animation.GrandCraftAnimations;
 import com.hrtq.grandcraft.client.hud.ManaBarElement;
 import com.hrtq.grandcraft.client.hud.StaminaBarElement;
 import com.hrtq.grandcraft.client.render.LifeEssenceOrbRenderer;
 import com.hrtq.grandcraft.client.render.ZombieHumanRenderer;
+import com.hrtq.grandcraft.client.tooltip.WeaponTooltip;
 import com.hrtq.grandcraft.combat.CombatPhaseView;
+import com.hrtq.grandcraft.combat.WeaponSettings;
 import com.hrtq.grandcraft.config.GameSettings;
 import com.hrtq.grandcraft.entity.GrandCraftEntities;
 import com.hrtq.grandcraft.progression.LevelSettings;
@@ -25,9 +28,18 @@ public class GrandCraftClient implements ClientModInitializer {
 		GrandCraftKeyMappings.register();
 		GrandCraftClientNetworking.register();
 
+		// The animator's clips for actors on the vanilla rig. Safe this early: the
+		// reload-listener registry is not resolved until CLIENT_STARTED.
+		GrandCraftAnimations.register();
+
 		// Lets GeckoLib animation controllers, which are registered on entities in the
 		// common source set, read the phase data that only exists on the client.
 		CombatPhaseView.set(new ClientCombatPhaseView());
+
+		// Weapon damage is now a fact about its holder, so the item tooltip has to say
+		// so. Paired with ItemStackAttributeTooltipMixin, which takes vanilla's now-false
+		// damage line back out.
+		WeaponTooltip.register();
 
 		// EntityRendererRegistry is marked deprecated as a class, but there is no
 		// replacement in this Fabric version: vanilla's EntityRenderers.register is
@@ -73,6 +85,7 @@ public class GrandCraftClient implements ClientModInitializer {
 				ClientGameSettings.set(GameSettings.DEFAULT);
 				ClientStatSettings.set(StatSettings.DEFAULT);
 				ClientLevelSettings.set(LevelSettings.DEFAULT);
+				ClientWeaponSettings.set(WeaponSettings.DEFAULT);
 				return;
 			}
 

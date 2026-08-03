@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.stats;
 
+import com.mojang.serialization.Codec;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
@@ -36,6 +37,16 @@ public enum CharacterStat implements StringRepresentable {
 	 */
 	public static final StreamCodec<ByteBuf, CharacterStat> STREAM_CODEC =
 			ByteBufCodecs.STRING_UTF8.map(CharacterStat::byId, CharacterStat::getSerializedName);
+
+	/**
+	 * The saved form, used by {@link WeaponRequirement} on item stacks.
+	 *
+	 * <p>{@code fromEnum} errors on a name it does not know rather than resolving it,
+	 * which is the same refusal {@link #STREAM_CODEC} makes and is wanted here for a
+	 * sharper reason: this one decodes off disk, where a stale name means a weapon that
+	 * would otherwise come back gated on a stat nobody authored it against.
+	 */
+	public static final Codec<CharacterStat> CODEC = StringRepresentable.fromEnum(CharacterStat::values);
 
 	private final String id;
 

@@ -12,11 +12,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Leans a dodging actor's whole body into the step.
+ * Turns a dodging actor's whole body into the step.
  *
  * <p>{@code setupRotations} is where vanilla applies every whole-body rotation it
  * has — the body yaw, the death topple, the riptide pitch — so it is the right
- * place for one more, and injecting at TAIL means the lean composes on top of the
+ * place for one more, and injecting at TAIL means the turn composes on top of the
  * body yaw exactly as riptide's pitch does.
  *
  * <p>Targets {@code LivingEntityRenderer} rather than the player's renderer: the
@@ -24,9 +24,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * branches, so this fires for the player as well as for any mob that ever gains the
  * verb. One hook, no entity types named.
  *
- * <p>The lean has to sit here rather than in the model because the humanoid rig has
+ * <p>The turn has to sit here rather than in the model because the humanoid rig has
  * no bone that moves the whole body — posing one would bend the actor at the waist
- * instead of tipping it off its feet.
+ * and leave its legs facing the way they were. The rest of the dodge, everything
+ * that <em>is</em> expressible as parts, is drawn from the same clip in
+ * {@code PlayerModelMixin}.
  */
 @Mixin(LivingEntityRenderer.class)
 public abstract class LivingEntityRendererDodgeMixin {
@@ -48,8 +50,6 @@ public abstract class LivingEntityRendererDodgeMixin {
 				poseState.grandcraft$phase(),
 				poseState.grandcraft$phaseProgress(),
 				poseState.grandcraft$travelYaw(),
-				bodyRot,
-				state.boundingBoxHeight,
-				scale);
+				bodyRot);
 	}
 }

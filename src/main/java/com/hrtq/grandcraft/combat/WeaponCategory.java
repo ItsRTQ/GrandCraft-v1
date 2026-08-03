@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.combat;
 
 import com.hrtq.grandcraft.GrandCraft;
+import com.hrtq.grandcraft.stats.StatWeights;
 import com.mojang.serialization.Codec;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -50,7 +51,7 @@ public enum WeaponCategory implements StringRepresentable {
 	 * Speed and cheapness. Twelve swings from full and almost immune to exhaustion,
 	 * paid for with reach and per-hit damage.
 	 */
-	LIGHT("light", 2, 2, 2, 8, ArcaneSettings.NONE),
+	LIGHT("light", 2, 2, 2, 8, new StatWeights(20, 80, 0, 0), ArcaneSettings.NONE),
 
 	/**
 	 * Swords and axes: the middle of the road, and the baseline everything else is
@@ -61,7 +62,7 @@ public enum WeaponCategory implements StringRepresentable {
 	 * change is confounded and every other category's numbers are being judged
 	 * against a moving baseline.
 	 */
-	MEDIUM("medium", 5, 3, 3, 12, ArcaneSettings.NONE),
+	MEDIUM("medium", 5, 3, 3, 12, new StatWeights(60, 40, 0, 0), ArcaneSettings.NONE),
 
 	/**
 	 * Reach and commitment. Slow to recover from and expensive to swing, but it
@@ -76,13 +77,13 @@ public enum WeaponCategory implements StringRepresentable {
 	 * lets the ten tick regen delay expire — so a claymore user cannot both swing and
 	 * turtle, which is the decision the weapon exists to create.
 	 */
-	HEAVY("heavy", 10, 5, 10, 20, ArcaneSettings.NONE),
+	HEAVY("heavy", 10, 5, 10, 20, new StatWeights(100, 0, 0, 0), ArcaneSettings.NONE),
 
 	/**
 	 * The caster's implement. Poor in melee, and not a guard implement — which is
 	 * what leaves the right button free to mean "cast".
 	 */
-	ARCANE("arcane", 6, 3, 6, 10,
+	ARCANE("arcane", 6, 3, 6, 10, new StatWeights(0, 20, 0, 80),
 			// Knockback is deliberately zero: a gust that shoved was too good at
 			// creating distance for free, on an attack that costs nothing to hold.
 			// The mechanism is kept rather than deleted so a heavier spell can use it.
@@ -99,7 +100,7 @@ public enum WeaponCategory implements StringRepresentable {
 	 * something with a bow, which is not a thing anyone does on purpose — do not
 	 * expect to feel this one yet, and do not tune it by feel.
 	 */
-	RANGED("ranged", 0, 2, 4, 6, ArcaneSettings.NONE),
+	RANGED("ranged", 0, 2, 4, 6, new StatWeights(20, 80, 0, 0), ArcaneSettings.NONE),
 
 	/**
 	 * Bare hands, and anything the tags do not claim — a pickaxe, a fishing rod, a
@@ -111,27 +112,33 @@ public enum WeaponCategory implements StringRepresentable {
 	 * unhandled case into a deliberate penalty: no reach, no damage bonus, and
 	 * unarmed endlag.
 	 *
-	 * <p>Its defaults must stay identical to {@link #MEDIUM}'s for the same reason
-	 * MEDIUM's must — punching silently changing is a report nobody would connect to
-	 * a weapon slice.
+	 * <p>Its <em>timings and cost</em> must stay identical to {@link #MEDIUM}'s for the
+	 * same reason MEDIUM's must — punching silently changing is a report nobody would
+	 * connect to a weapon slice.
+	 *
+	 * <p>Its scaling weights are the one thing that deliberately differs, and they can,
+	 * because there was no pre-weapon punching baseline for them to preserve. A fist is
+	 * more purely Strength than a sword is (70/30 against 60/40), which is also what
+	 * keeps the useful accident that punching beats swinging a claymore you cannot lift.
 	 */
-	UNARMED("unarmed", 3, 2, 3, 12, ArcaneSettings.NONE, null);
+	UNARMED("unarmed", 3, 2, 3, 12, new StatWeights(70, 30, 0, 0), ArcaneSettings.NONE, null);
 
 	private final String id;
 	private final TagKey<Item> tag;
 	private final CategorySettings defaults;
 	private final Codec<CategorySettings> settingsCodec;
 
-	WeaponCategory(String id, int startup, int active, int recovery, int cost, ArcaneSettings arcane) {
-		this(id, startup, active, recovery, cost, arcane,
+	WeaponCategory(String id, int startup, int active, int recovery, int cost,
+			StatWeights weights, ArcaneSettings arcane) {
+		this(id, startup, active, recovery, cost, weights, arcane,
 				TagKey.create(Registries.ITEM, GrandCraft.id(id + "_weapons")));
 	}
 
-	WeaponCategory(String id, int startup, int active, int recovery, int cost, ArcaneSettings arcane,
-			TagKey<Item> tag) {
+	WeaponCategory(String id, int startup, int active, int recovery, int cost,
+			StatWeights weights, ArcaneSettings arcane, TagKey<Item> tag) {
 		this.id = id;
 		this.tag = tag;
-		this.defaults = new CategorySettings(startup, active, recovery, cost, arcane);
+		this.defaults = new CategorySettings(startup, active, recovery, cost, weights, arcane);
 		// Its own codec, built from its own defaults, so a category missing from the
 		// config file falls back to its own values rather than to some shared blank.
 		this.settingsCodec = CategorySettings.codec(this.defaults);

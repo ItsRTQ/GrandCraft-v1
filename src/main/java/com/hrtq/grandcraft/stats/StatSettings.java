@@ -38,7 +38,8 @@ public record StatSettings(
 		int manaPerPoolPoint,
 		int spellDamagePerArcane,
 		int spellCooldownPerArcane,
-		int manaRegenMinArcane) {
+		int manaRegenMinArcane,
+		int meleeDamagePerPoint) {
 
 	/**
 	 * The three pool figures are deliberately chunky where the per-stat ones are
@@ -67,9 +68,16 @@ public record StatSettings(
 	 * <p>Of the shipped classes only the Sorcerer (Arcane 16) clears the threshold on
 	 * day one. A Cleric starts at 13 and reaches it after two stat points — deliberate:
 	 * recovery is something a character grows into, not something a class is handed.
+	 *
+	 * <p>{@code meleeDamagePerPoint} is far and away the steepest rate here, and that is
+	 * the design rather than an oversight: a weapon now supplies a low base and the
+	 * character supplies the rest, so this one number is what makes a class visible in a
+	 * fight and a level worth reaching. At 10 a character twenty points past a weapon's
+	 * requirement hits three times as hard as one who has only just qualified — a
+	 * Warrior's claymore goes from 4.5 to 13.5 across roughly twenty levels.
 	 */
 	public static final StatSettings DEFAULT =
-			new StatSettings(50, 50, 3, 2, 100, 2, 20, 2, 10, 10, 5, 3, 15);
+			new StatSettings(50, 50, 3, 2, 100, 2, 20, 2, 10, 10, 5, 3, 15, 10);
 
 	/**
 	 * Bounds shared by the config fields and the server-side clamp.
@@ -129,6 +137,23 @@ public record StatSettings(
 	 */
 	public static final double MIN_SPELL_COOLDOWN_MULTIPLIER = 0.25;
 	public static final double MAX_SPELL_COOLDOWN_MULTIPLIER = 2.00;
+
+	/**
+	 * Bounds on what a character's stats do to a weapon they can actually lift.
+	 *
+	 * <p>The ceiling sits deliberately <em>above</em> the 3x the shipped rate is aimed
+	 * at, so it acts as a runaway guard rather than as the design's real limit. At 3.00
+	 * a Warrior would reach it at around level twenty and every further point would
+	 * silently pay nothing — a progression system that stops paying out without saying
+	 * so is worse than one that pays out slowly.
+	 *
+	 * <p>The floor is above zero for the reason the spell one is, plus one of its own:
+	 * the blend can fall below a requirement even when the gate stat clears it, because
+	 * a gate reads one stat and a blend reads several. A strong, clumsy character
+	 * scraping a sword's Strength gate should swing feebly, not for free.
+	 */
+	public static final double MIN_MELEE_DAMAGE_MULTIPLIER = 0.50;
+	public static final double MAX_MELEE_DAMAGE_MULTIPLIER = 5.00;
 
 	/**
 	 * Ceiling on the Arcane a character must reach before mana recovers at all.
@@ -205,6 +230,25 @@ public record StatSettings(
 		return arcane >= this.manaRegenMinArcane ? 1.0F : 0.0F;
 	}
 
+	/**
+	 * What a character's stats do to the weapon they are holding. 1.0 is the weapon's
+	 * own base; higher hits harder.
+	 *
+	 * <p><strong>Takes a surplus, not a stat value.</strong> Every other rate in this
+	 * record is priced against {@link StatConstants#NEUTRAL}, because a stat is measured
+	 * against what an ordinary person has. A weapon is not: it states its own demand,
+	 * and the question that matters is how far past <em>that</em> the character is. So
+	 * the caller subtracts the requirement and hands the difference in — which is also
+	 * what stops a heavier weapon being punished twice for asking for more.
+	 *
+	 * <p>Clamped on the finished multiplier rather than on the per-point rate, for the
+	 * same reason the others are.
+	 */
+	public float meleeDamageMultiplier(double surplus) {
+		double scale = 1.0 + surplus * this.meleeDamagePerPoint / 100.0;
+		return (float) clamp(scale, MIN_MELEE_DAMAGE_MULTIPLIER, MAX_MELEE_DAMAGE_MULTIPLIER);
+	}
+
 	public ManaSettings mana() {
 		return new ManaSettings(this.maxMana, this.manaRegenPerSecond, this.manaRegenDelayTicks);
 	}
@@ -262,7 +306,9 @@ public record StatSettings(
 			Codec.INT.optionalFieldOf("spell_cooldown_per_arcane", DEFAULT.spellCooldownPerArcane())
 					.forGetter(StatSettings::spellCooldownPerArcane),
 			Codec.INT.optionalFieldOf("mana_regen_min_arcane", DEFAULT.manaRegenMinArcane())
-					.forGetter(StatSettings::manaRegenMinArcane)
+					.forGetter(StatSettings::manaRegenMinArcane),
+			Codec.INT.optionalFieldOf("melee_damage_per_point", DEFAULT.meleeDamagePerPoint())
+					.forGetter(StatSettings::meleeDamagePerPoint)
 	).apply(instance, StatSettings::new));
 
 	public static final StreamCodec<ByteBuf, StatSettings> STREAM_CODEC = StreamCodec.of(
@@ -280,13 +326,15 @@ public record StatSettings(
 				buf.writeInt(settings.spellDamagePerArcane());
 				buf.writeInt(settings.spellCooldownPerArcane());
 				buf.writeInt(settings.manaRegenMinArcane());
+				buf.writeInt(settings.meleeDamagePerPoint());
 			},
 			// Java evaluates arguments left to right, so this matches the writes above.
 			buf -> new StatSettings(
 					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(),
 					buf.readInt(), buf.readInt(), buf.readInt(),
 					buf.readInt(), buf.readInt(), buf.readInt(),
-					buf.readInt(), buf.readInt(), buf.readInt()));
+					buf.readInt(), buf.readInt(), buf.readInt(),
+					buf.readInt()));
 
 	/** A copy with every value forced inside its bounds. */
 	public StatSettings clamped() {
@@ -303,7 +351,8 @@ public record StatSettings(
 				clamp(this.manaPerPoolPoint, 0, MAX_PER_POOL_POINT),
 				clamp(this.spellDamagePerArcane, 0, MAX_PERCENT_PER_POINT),
 				clamp(this.spellCooldownPerArcane, 0, MAX_PERCENT_PER_POINT),
-				clamp(this.manaRegenMinArcane, 0, MAX_MANA_REGEN_MIN_ARCANE));
+				clamp(this.manaRegenMinArcane, 0, MAX_MANA_REGEN_MIN_ARCANE),
+				clamp(this.meleeDamagePerPoint, 0, MAX_PERCENT_PER_POINT));
 	}
 
 	private static int clamp(int value, int min, int max) {

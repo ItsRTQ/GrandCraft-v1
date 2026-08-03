@@ -17,7 +17,7 @@ import net.minecraft.network.codec.StreamCodec;
  * out with that category's own defaults — so {@link #forCategory} never returns null
  * and a newly added category works before anyone has configured it.
  */
-public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
+public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory, WeaponRules rules) {
 
 	public WeaponSettings {
 		EnumMap<WeaponCategory, CategorySettings> complete = new EnumMap<>(WeaponCategory.class);
@@ -28,6 +28,18 @@ public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
 		}
 
 		byCategory = Collections.unmodifiableMap(complete);
+
+		// Same totalising bargain as the map above: a file or packet written before the
+		// rules existed still produces a usable snapshot rather than a null field that
+		// every reader would have to guard.
+		if (rules == null) {
+			rules = WeaponRules.DEFAULT;
+		}
+	}
+
+	/** Categories only, for the callers that have no opinion about the shared rules. */
+	public WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
+		this(byCategory, WeaponRules.DEFAULT);
 	}
 
 	/** Every category at its shipped starting values. Prototype tuning, not balance. */
@@ -40,6 +52,8 @@ public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
 				for (WeaponCategory category : WeaponCategory.values()) {
 					CategorySettings.STREAM_CODEC.encode(buf, settings.forCategory(category));
 				}
+
+				WeaponRules.STREAM_CODEC.encode(buf, settings.rules());
 			},
 			buf -> {
 				EnumMap<WeaponCategory, CategorySettings> decoded =
@@ -49,7 +63,7 @@ public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
 					decoded.put(category, CategorySettings.STREAM_CODEC.decode(buf));
 				}
 
-				return new WeaponSettings(decoded);
+				return new WeaponSettings(decoded, WeaponRules.STREAM_CODEC.decode(buf));
 			});
 
 	public CategorySettings forCategory(WeaponCategory category) {
@@ -60,7 +74,12 @@ public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
 	public WeaponSettings with(WeaponCategory category, CategorySettings settings) {
 		EnumMap<WeaponCategory, CategorySettings> copy = new EnumMap<>(this.byCategory);
 		copy.put(category, settings);
-		return new WeaponSettings(copy);
+		return new WeaponSettings(copy, this.rules);
+	}
+
+	/** A copy with the shared rules replaced. */
+	public WeaponSettings with(WeaponRules replacement) {
+		return new WeaponSettings(this.byCategory, replacement);
 	}
 
 	/**
@@ -74,6 +93,6 @@ public record WeaponSettings(Map<WeaponCategory, CategorySettings> byCategory) {
 			clamped.put(category, forCategory(category).clamped());
 		}
 
-		return new WeaponSettings(clamped);
+		return new WeaponSettings(clamped, this.rules.clamped());
 	}
 }

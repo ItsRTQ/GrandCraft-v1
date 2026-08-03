@@ -74,7 +74,7 @@ public final class GrandCraftNetworking {
 		PayloadTypeRegistry.serverboundPlay()
 				.register(ApplyWeaponConfigPayload.TYPE, ApplyWeaponConfigPayload.STREAM_CODEC);
 		PayloadTypeRegistry.clientboundPlay()
-				.register(OpenWeaponConfigPayload.TYPE, OpenWeaponConfigPayload.STREAM_CODEC);
+				.register(WeaponConfigPayload.TYPE, WeaponConfigPayload.STREAM_CODEC);
 
 		registerClassSelection();
 		registerStatSpending();
@@ -101,6 +101,11 @@ public final class GrandCraftNetworking {
 			// The sheet draws progress towards the next level, which means it needs the
 			// cost curve as well as the player's own progress.
 			ServerPlayNetworking.send(player, new LevelConfigPayload(LevelTuning.current(), false));
+
+			// Weapon settings joined this list when damage started being drawn on a
+			// tooltip: the scaling weights and the global down-scale are half of what
+			// decides the number a player reads before they swing.
+			ServerPlayNetworking.send(player, new WeaponConfigPayload(WeaponTuning.current(), false));
 		});
 	}
 
@@ -121,13 +126,8 @@ public final class GrandCraftNetworking {
 		ServerPlayNetworking.send(player, new LevelConfigPayload(LevelTuning.current(), true));
 	}
 
-	/**
-	 * Weapon settings are server-held, so unlike the game, stat and level ones they
-	 * are not pushed on join — this is the only time they reach a client, and only
-	 * the admin who asked for the screen.
-	 */
 	public static void sendWeaponConfig(ServerPlayer player) {
-		ServerPlayNetworking.send(player, new OpenWeaponConfigPayload(WeaponTuning.current()));
+		ServerPlayNetworking.send(player, new WeaponConfigPayload(WeaponTuning.current(), true));
 	}
 
 	private static void registerClassSelection() {
@@ -285,6 +285,19 @@ public final class GrandCraftNetworking {
 			// window that could never connect.
 			WeaponTuning.set(payload.settings());
 			WeaponConfigFile.save(WeaponTuning.current());
+
+			// Every client draws its own weapon tooltips from its own copy, so all of
+			// them have to be told, not just the admin who made the change. Without this
+			// an edit here would leave every other player's tooltip quietly lying.
+			MinecraftServer server = player.level().getServer();
+
+			if (server != null) {
+				WeaponConfigPayload update = new WeaponConfigPayload(WeaponTuning.current(), false);
+
+				for (ServerPlayer online : server.getPlayerList().getPlayers()) {
+					ServerPlayNetworking.send(online, update);
+				}
+			}
 
 			GrandCraft.LOGGER.info("{} updated weapon tuning", player.getGameProfile().name());
 			player.sendSystemMessage(Component.translatable("commands.grandcraft.config.saved"));

@@ -10,6 +10,7 @@
 		"LivingEntityMixin",
 		"MeleeAttackGoalMixin",
 		"MobMeleeRangeMixin",
+		"PlayerAttackMixin",
 		"PlayerAttributesMixin"
 	],
 	"injectors": {

@@ -2,10 +2,12 @@ package com.hrtq.grandcraft;
 
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.GrandCraftCombat;
+import com.hrtq.grandcraft.combat.VanillaWeaponRequirements;
 import com.hrtq.grandcraft.combat.WeaponConfigFile;
 import com.hrtq.grandcraft.command.GrandCraftCommands;
 import com.hrtq.grandcraft.config.GameConfigFile;
 import com.hrtq.grandcraft.entity.GrandCraftEntities;
+import com.hrtq.grandcraft.item.GrandCraftComponents;
 import com.hrtq.grandcraft.item.GrandCraftItems;
 import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
@@ -42,7 +44,12 @@ public class GrandCraft implements ModInitializer {
 		// to exist by the time it runs.
 		GrandCraftAttributes.register();
 
+		// Before the items: their properties reference the weapon-requirement component
+		// directly, so it has to be registered by the time their initialisers run.
+		GrandCraftComponents.register();
+
 		GrandCraftItems.register();
+		VanillaWeaponRequirements.register();
 		GrandCraftEntities.register();
 		GrandCraftAttachments.register();
 		GrandCraftNetworking.register();

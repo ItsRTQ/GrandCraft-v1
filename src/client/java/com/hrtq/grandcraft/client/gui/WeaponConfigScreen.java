@@ -3,8 +3,10 @@ package com.hrtq.grandcraft.client.gui;
 import com.hrtq.grandcraft.combat.ArcaneSettings;
 import com.hrtq.grandcraft.combat.CategorySettings;
 import com.hrtq.grandcraft.combat.WeaponCategory;
+import com.hrtq.grandcraft.combat.WeaponRules;
 import com.hrtq.grandcraft.combat.WeaponSettings;
 import com.hrtq.grandcraft.network.ApplyWeaponConfigPayload;
+import com.hrtq.grandcraft.stats.StatWeights;
 import java.util.EnumMap;
 import java.util.Map;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -40,14 +42,21 @@ import net.minecraft.network.chat.Component;
  * <li>A line under the tab row naming what the open category actually contains, so
  *     "Heavy" is visibly a group rather than an item.</li>
  * <li><strong>No sections.</strong> The combat screen splits its tabs into groups
- *     because an actor has twenty-five values; a category has two, or eight for the
- *     one that casts. A section row over eight rows is a control that only adds a
- *     concept to learn, and it made the arcane tab behave differently from every
- *     other tab for no benefit. The value list is wrapped in a
- *     {@link ScrollableLayout} instead, which solves the height problem for every
- *     tab and every window size rather than for the one tab that had outgrown the
- *     screen.</li>
+ *     because an actor has twenty-five values; a category has seven, or thirteen for
+ *     the one that casts. A section row is a control that only adds a concept to
+ *     learn, and it made the arcane tab behave differently from every other tab for
+ *     no benefit. The value list is wrapped in a {@link ScrollableLayout} instead,
+ *     which solves the height problem for every tab and every window size rather than
+ *     for the one tab that had outgrown the screen.</li>
  * </ul>
+ *
+ * <h2>The Rules page</h2>
+ * {@link WeaponRules} applies to every weapon whatever kind it is, so it belongs to no
+ * category and gets its own page in the same tab row. Deliberately a tab rather than
+ * the section row the combat screen uses: a tab is a concept this screen already has,
+ * and these genuinely are different values rather than a different view of the same
+ * ones. It carries the same banking obligation as a category tab, which is what
+ * {@link #fieldsAreRules} exists for.
  *
  * <p><strong>Startup and the hit window are still not shown</strong>, even though
  * {@link CategorySettings} stores them. Nothing reads them until the player gets real
@@ -61,7 +70,12 @@ public class WeaponConfigScreen extends Screen {
 	private static final int LABEL_WIDTH = 96;
 	private static final int FIELD_WIDTH = 54;
 	private static final int FIELD_HEIGHT = 16;
-	private static final int TAB_WIDTH = 62;
+	/**
+	 * Narrowed from 62 when the Rules page made a seventh tab. Seven at the old width
+	 * ran wider than the row had ever been; at 56 the whole row is within a few pixels
+	 * of what six tabs already occupied, so nothing moves for existing users.
+	 */
+	private static final int TAB_WIDTH = 56;
 	private static final int BUTTON_WIDTH = 65;
 	private static final int CELL_SPACING = 4;
 	private static final int SECTION_SPACING = 8;
@@ -118,24 +132,63 @@ public class WeaponConfigScreen extends Screen {
 	private TunableField cooldown;
 	private TunableField range;
 
+	/** The four scaling weights for the open category. */
+	private TunableField weightStrength;
+	private TunableField weightAgility;
+	private TunableField weightConstitution;
+	private TunableField weightArcane;
+
+	/**
+	 * Live running total of the four weights above.
+	 *
+	 * <p>Weights are ratios, so any total is legal and none is an error — but 100 is
+	 * the only total where a weight can be read as a percentage at a glance, which is
+	 * how everyone will read them regardless. This nudges towards it without refusing
+	 * anything.
+	 */
+	private StringWidget weightTotal;
+
+	/** The shared rules' fields, present only on the rules page. */
+	private TunableField weaponBase;
+	private TunableField failedDamage;
+
+	/** The shared rules as currently edited. */
+	private WeaponRules rules;
+
+	/** Whether the rules page is open instead of a category. */
+	private boolean rulesOpen;
+
+	/**
+	 * Whether the fields on screen belong to the rules page.
+	 *
+	 * <p>The companion to {@link #fieldsFor}, and separate from it because that field
+	 * already uses null to mean "nothing built yet". Both are needed for the same
+	 * reason: {@link #init()} has to bank the visible fields into the right place, and
+	 * by the time it runs the page has already changed.
+	 */
+	private boolean fieldsAreRules;
+
 	public WeaponConfigScreen(WeaponSettings settings) {
 		super(Component.translatable("screen.grandcraft.weapons.title"));
 
 		for (WeaponCategory category : WeaponCategory.values()) {
 			this.working.put(category, settings.forCategory(category));
 		}
+
+		this.rules = settings.rules();
 	}
 
 	@Override
 	protected void init() {
 		// Bank whatever is on screen first. This runs on window resize as well as on a
 		// tab switch, so without it either would silently discard edits.
-		if (this.fieldsFor != null) {
+		if (this.fieldsAreRules) {
+			this.rules = readRules();
+		} else if (this.fieldsFor != null) {
 			this.working.put(this.fieldsFor, readFields());
 		}
 
 		WeaponCategory category = this.activeTab;
-		CategorySettings seed = this.working.get(category);
 
 		LinearLayout root = LinearLayout.vertical().spacing(SECTION_SPACING);
 		root.addChild(new StringWidget(this.title, this.font));
@@ -147,11 +200,18 @@ public class WeaponConfigScreen extends Screen {
 						.withStyle(ChatFormatting.GRAY),
 				this.font));
 
-		root.addChild(buildTabs(category));
+		root.addChild(buildTabs());
 
 		// And said again for the open tab specifically, naming what is in it.
 		root.addChild(new StringWidget(
-				category.description().withStyle(ChatFormatting.GRAY), this.font));
+				(this.rulesOpen
+						? Component.translatable("screen.grandcraft.weapons.rules.description")
+						: category.description()).withStyle(ChatFormatting.GRAY),
+				this.font));
+
+		GridLayout grid = this.rulesOpen
+				? buildRulesGrid()
+				: buildGrid(category, this.working.get(category));
 
 		// Scrolled rather than split into sections. The arcane tab's eight rows clipped
 		// off the bottom of the window, and a scroll area fixes that for every tab at
@@ -161,7 +221,7 @@ public class WeaponConfigScreen extends Screen {
 		// The container is a widget in its own right and renders and routes events to
 		// its contents, so only it is registered below; the fields inside must not also
 		// be added or they would draw a second time outside the clip.
-		ScrollableLayout values = new ScrollableLayout(this.minecraft, buildGrid(category, seed),
+		ScrollableLayout values = new ScrollableLayout(this.minecraft, grid,
 				Math.max(MIN_CONTENT_HEIGHT, this.height - CHROME_HEIGHT),
 				// Reserve the scrollbar's width on both sides, so the rows stay centred
 				// whether or not the bar is showing and the layout does not jump
@@ -175,16 +235,16 @@ public class WeaponConfigScreen extends Screen {
 		FrameLayout.centerInRectangle(root, 0, 0, this.width, this.height);
 		root.visitWidgets(this::addRenderableWidget);
 
-		this.fieldsFor = category;
+		this.fieldsFor = this.rulesOpen ? null : category;
+		this.fieldsAreRules = this.rulesOpen;
 	}
 
 	/**
 	 * Every value for the open category, in one grid.
 	 *
-	 * <p>Two rows for a category that only swings, eight for the one that casts —
-	 * which is fewer than the combat screen's guard group and needs no splitting.
+	 * <p>Seven rows for a category that only swings, thirteen for the one that casts.
 	 * Ordered the way someone tuning it would work: what a swing commits you to, what
-	 * it costs, then the cast.
+	 * it costs, who it rewards, then the cast.
 	 */
 	private GridLayout buildGrid(WeaponCategory category, CategorySettings seed) {
 		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
@@ -195,6 +255,43 @@ public class WeaponConfigScreen extends Screen {
 
 		this.staminaCost = unit(seed.staminaCost(), CategorySettings.MAX_COST, "stamina_points");
 		row = addValue(grid, row, "stamina_cost", this.staminaCost);
+
+		// Which stats this kind of weapon turns into damage. The single most important
+		// thing on the screen — it is what decides that a claymore is a Warrior's and a
+		// dagger an Outlaw's — so it sits with the other per-category values rather than
+		// on a page of its own.
+		StatWeights weights = seed.weights();
+
+		this.weightStrength = weight(weights.strength());
+		row = addValue(grid, row, "weight_strength", this.weightStrength);
+
+		this.weightAgility = weight(weights.agility());
+		row = addValue(grid, row, "weight_agility", this.weightAgility);
+
+		this.weightConstitution = weight(weights.constitution());
+		row = addValue(grid, row, "weight_constitution", this.weightConstitution);
+
+		this.weightArcane = weight(weights.arcane());
+		row = addValue(grid, row, "weight_arcane", this.weightArcane);
+
+		// Spans both columns: it is a readout for the four rows above it, not a value of
+		// its own, and a label-plus-field shape would invite someone to type into it.
+		this.weightTotal = new StringWidget(LABEL_WIDTH + CELL_SPACING + FIELD_WIDTH, FIELD_HEIGHT,
+				Component.empty(), this.font);
+		grid.addChild(this.weightTotal, row, 0, 1, 2);
+		row++;
+
+		refreshWeightTotal();
+
+		for (TunableField field : new TunableField[] {
+				this.weightStrength, this.weightAgility, this.weightConstitution, this.weightArcane}) {
+			field.setChangeListener(this::refreshWeightTotal);
+		}
+
+		// The rules page's fields are not on screen, so clear them for the same reason
+		// the cast fields below are cleared.
+		this.weaponBase = null;
+		this.failedDamage = null;
 
 		if (!category.casts()) {
 			// Cleared rather than left stale: readFields() uses null to mean "this
@@ -234,6 +331,59 @@ public class WeaponConfigScreen extends Screen {
 		return grid;
 	}
 
+	/**
+	 * The two values that are not about any one kind of weapon.
+	 *
+	 * <p>A page in the same tab row rather than a section row over the value list. The
+	 * screen's whole argument against sections is that they add a concept to learn for
+	 * a handful of rows; a tab is a concept this screen already has, and "Rules" is
+	 * legitimately a different page rather than a different view of the same one.
+	 */
+	private GridLayout buildRulesGrid() {
+		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
+		int row = 0;
+
+		this.weaponBase = unit(this.rules.weaponBasePercent(), WeaponRules.MAX_BASE_PERCENT, "percent");
+		row = addValue(grid, row, "weapon_base", this.weaponBase);
+
+		this.failedDamage = weaponUnit(this.rules.failedDamagePercent(),
+				WeaponRules.MAX_FAILED_PERCENT, "hundredths_damage");
+		addValue(grid, row, "failed_damage", this.failedDamage);
+
+		// Nulled for the same reason the cast fields are: readFields() must never read a
+		// field belonging to a page that is not on screen.
+		this.weightStrength = null;
+		this.weightAgility = null;
+		this.weightConstitution = null;
+		this.weightArcane = null;
+		this.weightTotal = null;
+		this.endlag = null;
+		this.staminaCost = null;
+		this.manaCost = null;
+
+		return grid;
+	}
+
+	/**
+	 * Restates the four weights as the running total they add up to.
+	 *
+	 * <p>Yellow away from 100 rather than red: an unusual total is legal and works
+	 * exactly as intended, it is just harder to read at a glance. Marking it as an error
+	 * would be a lie about the maths.
+	 */
+	private void refreshWeightTotal() {
+		if (this.weightTotal == null) {
+			return;
+		}
+
+		int total = this.weightStrength.intValue() + this.weightAgility.intValue()
+				+ this.weightConstitution.intValue() + this.weightArcane.intValue();
+
+		this.weightTotal.setMessage(
+				Component.translatable("screen.grandcraft.weapons.weight_total", total)
+						.withStyle(total == 100 ? ChatFormatting.DARK_GRAY : ChatFormatting.YELLOW));
+	}
+
 	private int addValue(GridLayout grid, int row, String key, TunableField field) {
 		grid.addChild(label(key), row, 0);
 		grid.addChild(field, row, 1);
@@ -270,7 +420,14 @@ public class WeaponConfigScreen extends Screen {
 				Component.translatable("screen.grandcraft.weapons." + unitKey), 0, max, value);
 	}
 
-	private LinearLayout buildTabs(WeaponCategory open) {
+	/** A scaling weight, which is a share rather than a quantity. */
+	private TunableField weight(int value) {
+		return new TunableField(this.font, FIELD_WIDTH, FIELD_HEIGHT,
+				Component.translatable("screen.grandcraft.config.weight"),
+				0, StatWeights.MAX_WEIGHT, value);
+	}
+
+	private LinearLayout buildTabs() {
 		LinearLayout tabs = LinearLayout.horizontal().spacing(CELL_SPACING);
 
 		for (WeaponCategory tab : WeaponCategory.values()) {
@@ -279,10 +436,20 @@ public class WeaponConfigScreen extends Screen {
 
 			// The open tab is shown as an unusable button, which greys it out and makes
 			// "you are here" obvious without a custom widget.
-			button.active = tab != open;
+			button.active = this.rulesOpen || tab != this.activeTab;
 			button.setTooltip(Tooltip.create(tab.description()));
 			tabs.addChild(button);
 		}
+
+		Button rulesButton = Button.builder(
+						Component.translatable("screen.grandcraft.weapons.rules"),
+						ignored -> selectRules())
+				.width(TAB_WIDTH).build();
+
+		rulesButton.active = !this.rulesOpen;
+		rulesButton.setTooltip(Tooltip.create(
+				Component.translatable("screen.grandcraft.weapons.rules.description")));
+		tabs.addChild(rulesButton);
 
 		return tabs;
 	}
@@ -309,27 +476,42 @@ public class WeaponConfigScreen extends Screen {
 	}
 
 	private void selectTab(WeaponCategory tab) {
-		if (tab == this.activeTab) {
+		if (tab == this.activeTab && !this.rulesOpen) {
 			return;
 		}
 
-		// init() banks the outgoing tab's fields via fieldsFor, so switching here is
-		// just a rebuild.
+		// init() banks the outgoing page's fields via fieldsFor / fieldsAreRules, so
+		// switching here is just a rebuild.
 		this.activeTab = tab;
+		this.rulesOpen = false;
+		rebuildWidgets();
+	}
+
+	private void selectRules() {
+		if (this.rulesOpen) {
+			return;
+		}
+
+		this.rulesOpen = true;
 		rebuildWidgets();
 	}
 
 	/**
-	 * Reloads the visible tab with that category's shipped defaults. Deliberately does
-	 * not save, and deliberately leaves other tabs alone — the player still has to
-	 * press Save, so a mis-click is recoverable with Cancel.
+	 * Reloads the visible page with its shipped defaults. Deliberately does not save,
+	 * and deliberately leaves other pages alone — the player still has to press Save, so
+	 * a mis-click is recoverable with Cancel.
 	 */
 	private void resetActiveTab() {
-		this.working.put(this.activeTab, this.activeTab.defaults());
+		if (this.rulesOpen) {
+			this.rules = WeaponRules.DEFAULT;
+		} else {
+			this.working.put(this.activeTab, this.activeTab.defaults());
+		}
 
 		// Drop the banked values so init() does not immediately overwrite the defaults
 		// with the fields it is about to replace.
 		this.fieldsFor = null;
+		this.fieldsAreRules = false;
 		rebuildWidgets();
 	}
 
@@ -348,6 +530,11 @@ public class WeaponConfigScreen extends Screen {
 				stored.activeTicks(),
 				this.endlag.intValue(),
 				this.staminaCost.intValue(),
+				new StatWeights(
+						this.weightStrength.intValue(),
+						this.weightAgility.intValue(),
+						this.weightConstitution.intValue(),
+						this.weightArcane.intValue()),
 				this.manaCost == null ? stored.arcane() : new ArcaneSettings(
 						this.manaCost.intValue(),
 						this.baseDamage.intValue(),
@@ -357,9 +544,22 @@ public class WeaponConfigScreen extends Screen {
 						this.range.intValue()));
 	}
 
+	/** The rules page's values as the fields currently stand. */
+	private WeaponRules readRules() {
+		return new WeaponRules(this.weaponBase.intValue(), this.failedDamage.intValue());
+	}
+
 	private void save() {
-		this.working.put(this.activeTab, readFields());
-		ClientPlayNetworking.send(new ApplyWeaponConfigPayload(new WeaponSettings(this.working)));
+		// Bank the page that is actually on screen. Writing the category unconditionally
+		// would read the weight fields while the rules page is up, which are null there.
+		if (this.rulesOpen) {
+			this.rules = readRules();
+		} else {
+			this.working.put(this.activeTab, readFields());
+		}
+
+		ClientPlayNetworking.send(
+				new ApplyWeaponConfigPayload(new WeaponSettings(this.working, this.rules)));
 		onClose();
 	}
 }
