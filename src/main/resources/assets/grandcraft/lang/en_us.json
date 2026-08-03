@@ -2,6 +2,8 @@
   "key.category.grandcraft.main": "GrandCraft",
   "key.grandcraft.open_menu": "Open GrandCraft Menu",
   "key.grandcraft.dodge": "Dodge Roll",
+  "key.grandcraft.radial_menu": "Quick-Slot Wheel",
+  "screen.grandcraft.radial.inventory": "Inventory",
   "screen.grandcraft.character_sheet": "Character Sheet",
   "screen.grandcraft.choose_class": "Choose your class",
   "screen.grandcraft.class_permanent": "This choice is permanent",

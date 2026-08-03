@@ -3,6 +3,8 @@ package com.hrtq.grandcraft.client;
 import com.hrtq.grandcraft.client.animation.GrandCraftAnimations;
 import com.hrtq.grandcraft.client.hud.HealthBarElement;
 import com.hrtq.grandcraft.client.hud.ManaBarElement;
+import com.hrtq.grandcraft.client.hud.RadialMenu;
+import com.hrtq.grandcraft.client.hud.RadialMenuElement;
 import com.hrtq.grandcraft.client.hud.StaminaBarElement;
 import com.hrtq.grandcraft.client.render.LifeEssenceOrbRenderer;
 import com.hrtq.grandcraft.client.render.ZombieHumanRenderer;
@@ -14,10 +16,12 @@ import com.hrtq.grandcraft.entity.GrandCraftEntities;
 import com.hrtq.grandcraft.progression.LevelSettings;
 import com.hrtq.grandcraft.stats.StatSettings;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.minecraft.client.AttackIndicatorStatus;
 import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 import net.minecraft.util.Util;
 
@@ -58,6 +62,35 @@ public class GrandCraftClient implements ClientModInitializer {
 		// HealthBarElement, which does not show absorption.
 		HudElementRegistry.removeElement(VanillaHudElements.HEALTH_BAR);
 
+		// The hotbar goes the same way, and for the same reason: the radial wheel is
+		// the mod's answer to "what am I holding, and what can I switch to", and a row
+		// of nine boxes along the bottom of the screen is the second answer.
+		//
+		// It takes two other things with it, both deliberate. The offhand slot is no
+		// longer displayed anywhere — the swap-hands key and the inventory screen are
+		// how the offhand is used now. And the attack indicator drew inside this
+		// element, which is what the next block is about.
+		HudElementRegistry.removeElement(VanillaHudElements.HOTBAR);
+
+		// The indicator has a second home vanilla already draws: under the crosshair,
+		// from the separate crosshair element, reading the same
+		// LocalPlayer.getAttackStrengthScale that PlayerAttackStrengthMixin overrides
+		// with GrandCraft's lockout. So moving the player's setting across is the whole
+		// job — the mixin needs no change and the feedback survives losing the hotbar.
+		//
+		// OFF is left alone. That is a player who asked for no indicator, and this is
+		// not the code to argue with them.
+		//
+		// On CLIENT_STARTED rather than here: this entrypoint runs from inside
+		// Minecraft's constructor, and reading options from there is a bet on how far
+		// along it is.
+		ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
+			if (client.options.attackIndicator().get() == AttackIndicatorStatus.HOTBAR) {
+				client.options.attackIndicator().set(AttackIndicatorStatus.CROSSHAIR);
+				client.options.save();
+			}
+		});
+
 		// All three bars are attached to the food bar's layer, in a chain, so they
 		// inherit vanilla's own rule for when status bars are shown — they disappear in
 		// creative and spectator with no gamemode check anywhere. The chain also fixes
@@ -74,6 +107,14 @@ public class GrandCraftClient implements ClientModInitializer {
 		HudElementRegistry.attachElementAfter(
 				StaminaBarElement.ID, ManaBarElement.ID, new ManaBarElement());
 
+		// The wheel is deliberately NOT chained onto that column. The bars hang off the
+		// food bar so they inherit vanilla's "show status bars?" rule and vanish in
+		// creative and spectator; the wheel is a menu the player opened, and a menu
+		// that refuses to appear in creative is a bug. Attached after the held-item
+		// name instead, which puts it over the world and under chat.
+		HudElementRegistry.attachElementAfter(
+				VanillaHudElements.HELD_ITEM_TOOLTIP, RadialMenuElement.ID, new RadialMenuElement());
+
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.level == null) {
 				// Between worlds: drop the tracking so entity ids from the old one
@@ -85,6 +126,7 @@ public class GrandCraftClient implements ClientModInitializer {
 				ClientMana.clear();
 				ClientCombatPhases.clear();
 				ClientGuard.clear();
+				RadialMenu.clear();
 				ClientGameSettings.set(GameSettings.DEFAULT);
 				ClientStatSettings.set(StatSettings.DEFAULT);
 				ClientLevelSettings.set(LevelSettings.DEFAULT);

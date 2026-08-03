@@ -5,6 +5,7 @@
 	"client": [
 		"AbstractZombieModelMixin",
 		"ClientJumpMixin",
+		"ContainerScreenInventoryKeyMixin",
 		"EntityRendererMixin",
 		"ExampleClientMixin",
 		"GameRendererCombatCameraMixin",
@@ -15,7 +16,9 @@
 		"LocalPlayerSprintMixin",
 		"MinecraftAttackGuardMixin",
 		"MinecraftAttackMissMixin",
+		"MinecraftRadialAttackMixin",
 		"MinecraftUseItemMixin",
+		"MouseHandlerRadialMixin",
 		"PlayerAttackStrengthMixin",
 		"PlayerModelMixin"
 	],
