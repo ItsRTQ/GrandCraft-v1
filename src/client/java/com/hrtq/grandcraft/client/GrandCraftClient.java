@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.client;
 
 import com.hrtq.grandcraft.client.animation.GrandCraftAnimations;
+import com.hrtq.grandcraft.client.hud.HealthBarElement;
 import com.hrtq.grandcraft.client.hud.ManaBarElement;
 import com.hrtq.grandcraft.client.hud.StaminaBarElement;
 import com.hrtq.grandcraft.client.render.LifeEssenceOrbRenderer;
@@ -16,7 +17,6 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudStatusBarHeightRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.renderer.entity.ThrownItemRenderer;
 import net.minecraft.util.Util;
@@ -52,24 +52,27 @@ public class GrandCraftClient implements ClientModInitializer {
 		// wind charge sprite": the entity reports that item and this draws it.
 		EntityRendererRegistry.register(GrandCraftEntities.GUST, ThrownItemRenderer::new);
 
-		// Attached to the food bar so the stamina bar inherits vanilla's own rule for
-		// when status bars are shown, and declared as a right-hand row so the air bar
-		// moves up rather than drawing over it. Both registries freeze once the client
-		// has started, which is well after this entrypoint runs.
-		HudElementRegistry.attachElementAfter(
-				VanillaHudElements.FOOD_BAR, StaminaBarElement.ID, new StaminaBarElement());
-		HudStatusBarHeightRegistry.addRight(
-				StaminaBarElement.ID, player -> StaminaBarElement.reservedHeight());
+		// Vanilla's hearts are removed outright rather than drawn over: the authored
+		// health bar says the same thing, and two visual languages for one number is
+		// worse than either. This also takes the absorption hearts with it — see
+		// HealthBarElement, which does not show absorption.
+		HudElementRegistry.removeElement(VanillaHudElements.HEALTH_BAR);
 
-		// Mana rides the stamina bar's layer for the same reason stamina rides the
-		// food bar's. The right-hand column stacks upward from the food bar, so
-		// attaching after stamina puts mana one row *above* it — there is no room
-		// below, and moving the confirmed-working stamina element to swap them would
-		// be a regression risk for no mechanical gain.
+		// All three bars are attached to the food bar's layer, in a chain, so they
+		// inherit vanilla's own rule for when status bars are shown — they disappear in
+		// creative and spectator with no gamemode check anywhere. The chain also fixes
+		// their draw order, which is the order HudBars stacks them in.
+		//
+		// Where they draw is entirely HudBars' business now. Nothing declares a
+		// right-hand status row any more: the bars moved to the top-left corner, so
+		// reserving a row there would push the air bar up to clear a gap nothing fills.
+		// HudElementRegistry freezes once the client has started, well after this runs.
+		HudElementRegistry.attachElementAfter(
+				VanillaHudElements.FOOD_BAR, HealthBarElement.ID, new HealthBarElement());
+		HudElementRegistry.attachElementAfter(
+				HealthBarElement.ID, StaminaBarElement.ID, new StaminaBarElement());
 		HudElementRegistry.attachElementAfter(
 				StaminaBarElement.ID, ManaBarElement.ID, new ManaBarElement());
-		HudStatusBarHeightRegistry.addRight(
-				ManaBarElement.ID, player -> ManaBarElement.reservedHeight());
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.level == null) {

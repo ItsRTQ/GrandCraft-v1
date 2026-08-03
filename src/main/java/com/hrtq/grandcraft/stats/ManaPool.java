@@ -72,28 +72,55 @@ public final class ManaPool {
 	 *        invested in Arcane.
 	 */
 	public static void tick(LivingEntity entity, ManaSettings settings, int bonusMax,
-			float regenMultiplier) {
+			float regenMultiplier, float bonusPerTick) {
 		ManaState state = read(entity, settings, bonusMax);
+		int delay = state.regenDelayTicks();
 
-		// Counted down even when nothing will recover, so a character who crosses the
-		// Arcane threshold mid-fight is not left holding a stale delay from the last
-		// thing they spent.
-		if (state.regenDelayTicks() > 0) {
-			write(entity, new ManaState(state.current(), state.regenDelayTicks() - 1));
-			return;
-		}
-
-		float rate = settings.regenPerTick() * regenMultiplier;
+		// Natural recovery waits out the delay a spend imposed. A potion does not:
+		// drinking one immediately after casting has to do something, or it reads as a
+		// broken potion rather than as a delay nobody was told about. The delay is still
+		// counted down underneath, so natural regen resumes on schedule.
+		float natural = delay > 0 ? 0.0F : settings.regenPerTick() * regenMultiplier;
 		float max = max(settings, bonusMax);
+		float next = Math.min(max, state.current() + natural + bonusPerTick);
 
-		// Nothing to write when nothing moves, which is the common case: a full pool,
-		// or any character whose mana does not recover. Writing regardless would mean
-		// an attachment update every tick for every player forever.
-		if (rate <= 0.0F || state.current() >= max) {
+		// Nothing to write when nothing moves and there is no delay left to count down,
+		// which is the common case: a full pool, or any character whose mana does not
+		// recover. Writing regardless would mean an attachment update every tick for
+		// every player forever.
+		if (next == state.current() && delay == 0) {
 			return;
 		}
 
-		write(entity, new ManaState(Math.min(max, state.current() + rate), 0));
+		write(entity, new ManaState(next, Math.max(0, delay - 1)));
+	}
+
+	/**
+	 * Grants mana outright — a potion's instant chunk rather than a rate.
+	 *
+	 * <p>Imposes no regen delay and clears none: a gain is not a spend, and a drink
+	 * should neither punish nor reward whatever the character was doing beforehand.
+	 * Silently capped at the ceiling, so overdrinking wastes the remainder rather than
+	 * banking it.
+	 *
+	 * @return how much was actually added, which is less than asked for on a nearly full
+	 *         pool and zero on a full one
+	 */
+	public static float restore(LivingEntity entity, ManaSettings settings, int bonusMax,
+			float amount) {
+		if (amount <= 0.0F) {
+			return 0.0F;
+		}
+
+		ManaState state = read(entity, settings, bonusMax);
+		float next = Math.min(max(settings, bonusMax), state.current() + amount);
+
+		if (next == state.current()) {
+			return 0.0F;
+		}
+
+		write(entity, new ManaState(next, state.regenDelayTicks()));
+		return next - state.current();
 	}
 
 	/**

@@ -6,6 +6,7 @@ import com.hrtq.grandcraft.combat.VanillaWeaponRequirements;
 import com.hrtq.grandcraft.combat.WeaponConfigFile;
 import com.hrtq.grandcraft.command.GrandCraftCommands;
 import com.hrtq.grandcraft.config.GameConfigFile;
+import com.hrtq.grandcraft.effect.GrandCraftEffects;
 import com.hrtq.grandcraft.entity.GrandCraftEntities;
 import com.hrtq.grandcraft.item.GrandCraftComponents;
 import com.hrtq.grandcraft.item.GrandCraftItems;
@@ -47,6 +48,10 @@ public class GrandCraft implements ModInitializer {
 		// Before the items: their properties reference the weapon-requirement component
 		// directly, so it has to be registered by the time their initialisers run.
 		GrandCraftComponents.register();
+
+		// Also before the items, and for the same reason: the mana drinks name the
+		// mana-regeneration effect in the consumable component they are built with.
+		GrandCraftEffects.register();
 
 		GrandCraftItems.register();
 		VanillaWeaponRequirements.register();

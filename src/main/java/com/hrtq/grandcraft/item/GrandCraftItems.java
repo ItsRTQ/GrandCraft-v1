@@ -22,6 +22,8 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ToolMaterial;
 import net.minecraft.world.item.component.AttackRange;
+import net.minecraft.world.item.component.Consumable;
+import net.minecraft.world.item.component.Consumables;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.component.Weapon;
 
@@ -68,6 +70,61 @@ public final class GrandCraftItems {
 	 * initialise. Same trap as {@code GrandCraftEntities.SUMMONABLE}.
 	 */
 	private static final List<Item> ALL = new ArrayList<>();
+
+	private static final int TICKS_PER_SECOND = 20;
+
+	/**
+	 * How long each drink's mana regeneration runs, and what the larger one restores the
+	 * instant it is swallowed.
+	 *
+	 * <p>Both run for the same three seconds, and at
+	 * {@code ManaRegenEffect.MANA_PER_TICK} that is <strong>30 mana each</strong> against
+	 * a default pool of 100. So the two drinks differ in exactly one way — the potion
+	 * pays 30 up front as well — which is the cleanest form the distinction can take:
+	 * the vial <em>sustains</em> casting, the potion <em>restores</em> and then sustains.
+	 *
+	 * <p>Baked here rather than exposed in a config screen, which is the same call the
+	 * weapons' damage and reach made: these describe two specific objects rather than a
+	 * rule of the ruleset. Changing them costs a rebuild.
+	 */
+	private static final float VIAL_REGEN_SECONDS = 3.0F;
+	private static final float POTION_REGEN_SECONDS = 3.0F;
+	private static final float POTION_INSTANT_MANA = 30.0F;
+
+	/**
+	 * What the health drinks are worth, on the same three second window as the mana ones.
+	 *
+	 * <p>The vial returns ten health, and the potion thirty <em>in total</em> — twenty of
+	 * it at once and the same ten over time the vial gives. So the potion is not a bigger
+	 * vial; it is a vial plus an emergency, which is the distinction that decides which
+	 * one you reach for.
+	 *
+	 * <p>Ten over three seconds is half a heart every six ticks, which is vanilla
+	 * Regeneration IV exactly; {@code HealthPotionItem.REGEN_AMPLIFIER} explains why that
+	 * level and no other lands on a whole number.
+	 */
+	private static final float HEALTH_VIAL_REGEN_SECONDS = 3.0F;
+	private static final float HEALTH_POTION_REGEN_SECONDS = 3.0F;
+	private static final float HEALTH_POTION_INSTANT = 20.0F;
+
+	/**
+	 * Vanilla's drinking interaction and nothing else: 1.6 seconds, the {@code DRINK}
+	 * animation and the generic drink sound, none of it described here so none of it can
+	 * drift from vanilla's.
+	 *
+	 * <p>Carries no {@code ApplyStatusEffectsConsumeEffect}, deliberately — the potion
+	 * items apply their own effects so that drinks stack by adding their durations
+	 * instead of vanilla's refresh-to-the-longest. See
+	 * {@code com.hrtq.grandcraft.effect.StackingEffects}.
+	 *
+	 * <p>Shared by all four drinks precisely because it says nothing about what is in the
+	 * bottle: what each one does is the item's business, and how it is drunk is identical.
+	 *
+	 * <p><strong>Declared before the items</strong>, like {@link #ALL}: this one is an
+	 * object rather than a compile-time constant, so a field below the items would still
+	 * be null when their initialisers run.
+	 */
+	private static final Consumable DRINK = Consumables.defaultDrink().build();
 
 	/**
 	 * Heavy: reach and commitment.
@@ -133,6 +190,55 @@ public final class GrandCraftItems {
 					.build()));
 
 	/**
+	 * A sip: mana over a short window, and nothing up front.
+	 *
+	 * <p>No {@code USE_REMAINDER}, so it leaves no empty bottle behind. That is the
+	 * deliberate difference from a vanilla potion — these are consumed outright rather
+	 * than decanted, so drinking one costs the container too.
+	 */
+	public static final Item MANA_VIAL = register("mana_vial",
+			properties -> new ManaPotionItem(properties, 0.0F, regenTicks(VIAL_REGEN_SECONDS)),
+			new Item.Properties()
+					.stacksTo(16)
+					.component(DataComponents.CONSUMABLE, DRINK));
+
+	/**
+	 * A draught: a chunk at once, then the same tail the vial has.
+	 *
+	 * <p>The instant chunk is what makes this the one to drink mid-fight — a tail alone
+	 * cannot answer a spell you need to cast now, which is the whole distinction between
+	 * this and the vial.
+	 */
+	public static final Item MANA_POTION = register("mana_potion",
+			properties -> new ManaPotionItem(properties, POTION_INSTANT_MANA,
+					regenTicks(POTION_REGEN_SECONDS)),
+			new Item.Properties()
+					.stacksTo(16)
+					.component(DataComponents.CONSUMABLE, DRINK));
+
+	/** A sip of health: ten over three seconds, and nothing up front. */
+	public static final Item HEALTH_VIAL = register("health_vial",
+			properties -> new HealthPotionItem(properties, 0.0F,
+					regenTicks(HEALTH_VIAL_REGEN_SECONDS)),
+			new Item.Properties()
+					.stacksTo(16)
+					.component(DataComponents.CONSUMABLE, DRINK));
+
+	/**
+	 * A draught of health: thirty in total, twenty of it immediately.
+	 *
+	 * <p>The instant twenty is what answers a hit you did not see coming; the tail is
+	 * the vial's. A drink that healed thirty purely over time would be no use at the
+	 * moment you most want one.
+	 */
+	public static final Item HEALTH_POTION = register("health_potion",
+			properties -> new HealthPotionItem(properties, HEALTH_POTION_INSTANT,
+					regenTicks(HEALTH_POTION_REGEN_SECONDS)),
+			new Item.Properties()
+					.stacksTo(16)
+					.component(DataComponents.CONSUMABLE, DRINK));
+
+	/**
 	 * The mod's own creative tab.
 	 *
 	 * <p>Its own rather than a vanilla one because every {@code CreativeModeTabs}
@@ -190,6 +296,11 @@ public final class GrandCraftItems {
 	 */
 	private static WeaponRequirement requires(CharacterStat stat, int value) {
 		return new WeaponRequirement(stat, value);
+	}
+
+	/** Drink durations are stated in seconds up here and spent in ticks everywhere else. */
+	private static int regenTicks(float seconds) {
+		return Math.round(seconds * TICKS_PER_SECOND);
 	}
 
 	private static Item register(String name, Item.Properties properties) {

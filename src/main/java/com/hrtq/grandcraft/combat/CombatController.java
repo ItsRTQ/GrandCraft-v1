@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.combat;
 
 import com.hrtq.grandcraft.GrandCraft;
+import com.hrtq.grandcraft.effect.ManaRegenEffect;
 import com.hrtq.grandcraft.network.CombatPhasePayload;
 import com.hrtq.grandcraft.network.ManaPayload;
 import com.hrtq.grandcraft.network.StaminaPayload;
@@ -96,6 +97,9 @@ public final class CombatController {
 	 * what makes writing it on the respawn path safe.
 	 */
 	private int manaBonusMax;
+
+	/** For turning a per-tick rate back into the per-second figure the client is sent. */
+	private static final int TICKS_PER_SECOND = 20;
 
 	private CombatState state = CombatState.NEUTRAL;
 
@@ -1097,13 +1101,38 @@ public final class CombatController {
 		float regenMultiplier =
 				stats.manaRegenMultiplier(StatEffects.statOf(entity, GrandCraftAttributes.ARCANE));
 
+		// Additive, and read fresh every tick rather than cached: a potion can start or
+		// run out at any moment, and both edges have to reach the client's bar.
+		float bonusPerTick = ManaRegenEffect.bonusPerTick(entity);
+
 		if (settings.enabled()) {
-			ManaPool.tick(entity, settings, this.manaBonusMax, regenMultiplier);
+			ManaPool.tick(entity, settings, this.manaBonusMax, regenMultiplier, bonusPerTick);
 		}
 
 		// Reported even when mana is switched off, so doing so actually clears the
 		// character sheet's row instead of freezing the last value there.
-		syncMana(player, settings, regenMultiplier);
+		syncMana(player, settings, regenMultiplier, bonusPerTick);
+	}
+
+	/**
+	 * Grants mana outright and makes sure the client hears about it promptly — a
+	 * potion's instant chunk.
+	 *
+	 * <p>Public because the mana ceiling lives here: {@code manaBonusMax} is this
+	 * controller's business, so anything granting mana has to come through it rather
+	 * than reach for {@code ManaPool} with a ceiling it would have to guess at.
+	 */
+	public void restoreMana(LivingEntity entity, float amount) {
+		ManaSettings settings = StatTuning.current().mana();
+
+		if (!settings.enabled() || ManaPool.restore(entity, settings, this.manaBonusMax, amount) <= 0.0F) {
+			return;
+		}
+
+		// Straight to the front of the sync throttle. A drink is a discrete, deliberate
+		// act and the bar jumping a quarter of a second later reads as the potion having
+		// missed — the same reason a discrete stamina spend syncs immediately.
+		this.manaSyncDelay = 0;
 	}
 
 	/**
@@ -1113,7 +1142,8 @@ public final class CombatController {
 	 * per life, which is also why a fault here would be invisible everywhere except
 	 * the character sheet.
 	 */
-	private void syncMana(ServerPlayer player, ManaSettings settings, float regenMultiplier) {
+	private void syncMana(ServerPlayer player, ManaSettings settings, float regenMultiplier,
+			float bonusPerTick) {
 		if (this.manaSyncDelay > 0) {
 			this.manaSyncDelay--;
 			return;
@@ -1131,7 +1161,12 @@ public final class CombatController {
 		// whose mana does not recover would draw a bar climbing on its own and then
 		// snapping back on the next sync. Same rule as the scaled jump cost the stamina
 		// payload carries.
-		int regenPerSecond = Math.round(settings.regenPerSecond() * regenMultiplier);
+		//
+		// A potion's contribution belongs in it for exactly that reason, and it is the
+		// larger term by far while one is running: leave it out and the bar creeps at the
+		// Arcane rate and then lurches every fourth tick as the real value lands.
+		int regenPerSecond = Math.round(
+				settings.regenPerSecond() * regenMultiplier + bonusPerTick * TICKS_PER_SECOND);
 
 		// The rate is part of the test, not just the value and the ceiling — see the
 		// note on syncedManaRegen. A reclass moves the rate while the pool sits still.
@@ -1146,11 +1181,14 @@ public final class CombatController {
 		this.syncedManaRegen = regenPerSecond;
 		this.manaSyncDelay = CombatConstants.STAMINA_SYNC_INTERVAL_TICKS;
 
-		ServerPlayNetworking.send(player, new ManaPayload(
-				current,
-				max,
-				regenPerSecond,
-				ManaPool.regenDelay(player, settings, this.manaBonusMax)));
+		// Effective, for the same reason the rate is. The client holds the bar still until
+		// this many ticks have passed, so reporting a delay that a potion is currently
+		// regenerating straight through would freeze the bar and then jerk it forward.
+		int regenDelay = bonusPerTick > 0.0F
+				? 0
+				: ManaPool.regenDelay(player, settings, this.manaBonusMax);
+
+		ServerPlayNetworking.send(player, new ManaPayload(current, max, regenPerSecond, regenDelay));
 	}
 
 	private boolean staminaSyncDue(CombatProfile profile) {

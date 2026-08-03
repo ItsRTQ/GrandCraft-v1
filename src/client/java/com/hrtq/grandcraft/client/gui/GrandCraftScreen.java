@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.client.gui;
 
+import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.client.ClientLevelSettings;
 import com.hrtq.grandcraft.client.ClientMana;
 import com.hrtq.grandcraft.client.ClientStamina;
@@ -27,8 +28,10 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Util;
 
 /**
@@ -71,14 +74,28 @@ public class GrandCraftScreen extends Screen {
 	private static final int COLUMN_GAP = 12;
 
 	/**
-	 * Room under the model for the identity block: class name, Essence Power level and
-	 * progress towards the next one.
+	 * Room under the model for the identity block's <em>text</em>: class name, Essence
+	 * Power level and progress towards the next one.
 	 *
 	 * <p>One gap plus three rows, with a little left over so the last line is not
 	 * pressed against the bottom margin. Raise this before adding a fourth line —
 	 * the model is sized from whatever is left, so it gives way rather than the text.
+	 *
+	 * <p>Not the whole reserve once a class is chosen: see {@link #identityReserve()},
+	 * which adds the badge's height to it.
 	 */
 	private static final int IDENTITY_RESERVE = 44;
+
+	/**
+	 * The class badge under the model, once a class has been chosen.
+	 *
+	 * <p>Half the browser's, and deliberately: there it is the thing being chosen and has
+	 * a panel to itself, here it is a label on a character who already is one. It also
+	 * shares the model column, which is the part of the layout that collapses first — so
+	 * the badge is counted in {@link #identityCentreX()} and clamped away from the screen
+	 * edge along with the lines beneath it.
+	 */
+	private static final int IDENTITY_ICON_SIZE = 32;
 
 	private static final int LINE_HEIGHT = 9;
 	private static final int ROW_HEIGHT = 11;
@@ -125,6 +142,19 @@ public class GrandCraftScreen extends Screen {
 	private static final int ARROW_SIZE = 20;
 
 	/**
+	 * The class picture between the arrows.
+	 *
+	 * <p>Must stay under {@code ARROW_OFFSET * 2} or it runs under the arrows: they sit
+	 * at the centre line plus and minus that offset, so 64 against an offset of 44 leaves
+	 * twelve pixels of air on each side.
+	 *
+	 * <p>The art is square and much larger than this — the icons are cropped to their
+	 * own content, so each fills its canvas and all four therefore read at the same size
+	 * on screen despite being drawn at different resolutions.
+	 */
+	private static final int CLASS_ICON_SIZE = 64;
+
+	/**
 	 * Distance from the panel's centre line to the inner edge of each arrow.
 	 *
 	 * <p>Fixed rather than derived from the name's width on purpose: an arrow that sits
@@ -156,6 +186,24 @@ public class GrandCraftScreen extends Screen {
 	 * same reason.
 	 */
 	private int previewIndex;
+
+	/**
+	 * Where the layout put each class picture, for {@link #extractRenderState} to draw
+	 * them.
+	 *
+	 * <p>Written by the layout rather than recomputed at draw time so the two cannot
+	 * disagree about it — the same reason the model and divider bounds are fields here.
+	 *
+	 * <p>The two are never both live: {@code classed} decides which, since the browser is
+	 * what the panel holds <em>until</em> a class is chosen and the badge is what appears
+	 * under the model afterwards. Kept as separate pairs anyway — they are different
+	 * sizes in different columns, and sharing one pair between two mutually exclusive
+	 * meanings is the kind of economy that reads as a bug later.
+	 */
+	private int browserIconLeft;
+	private int browserIconTop;
+	private int identityIconLeft;
+	private int identityIconTop;
 
 	private int dividerX;
 	private int contentTop;
@@ -250,7 +298,7 @@ public class GrandCraftScreen extends Screen {
 		int panelLeft = this.panelRight - (widestLabel() + COLUMN_GAP + VALUE_WIDTH);
 		this.modelLeft = EDGE_PADDING;
 		this.modelRight = Math.max(this.modelLeft + 1, panelLeft - COLUMN_GAP);
-		this.modelBottom = this.contentBottom - IDENTITY_RESERVE;
+		this.modelBottom = this.contentBottom - identityReserve();
 		this.modelSize = modelSize();
 		this.identityCentreX = identityCentreX();
 
@@ -276,6 +324,16 @@ public class GrandCraftScreen extends Screen {
 	 */
 	private void buildIdentity(PlayerClass playerClass) {
 		int y = this.modelBottom + SECTION_GAP;
+
+		// The badge, once there is one to show. Peasant has no icon and wants none: it is
+		// what a character is before choosing rather than something they chose, and the
+		// browser on the right is already showing what they could become.
+		if (this.classed) {
+			this.identityIconLeft = this.identityCentreX - IDENTITY_ICON_SIZE / 2;
+			this.identityIconTop = y;
+
+			y += IDENTITY_ICON_SIZE + SECTION_GAP;
+		}
 
 		addCentred(identityName(), this.identityCentreX, y);
 
@@ -499,6 +557,18 @@ public class GrandCraftScreen extends Screen {
 	}
 
 	/**
+	 * How much room the identity block needs under the model.
+	 *
+	 * <p>The badge is only there once a class is chosen, so the reserve is not a
+	 * constant: the model is sized from whatever is left over, which means it shrinks by
+	 * the badge's height at the moment Choose is pressed. That is the right thing to
+	 * give up — the picture is the part of this column that can afford to.
+	 */
+	private int identityReserve() {
+		return IDENTITY_RESERVE + (this.classed ? IDENTITY_ICON_SIZE + SECTION_GAP : 0);
+	}
+
+	/**
 	 * Where the block under the model is centred.
 	 *
 	 * <p>Under the model, but <strong>never starting before the screen edge</strong>.
@@ -513,8 +583,13 @@ public class GrandCraftScreen extends Screen {
 	 * rightwards, into the gap below the panel, which is empty at this height.
 	 */
 	private int identityCentreX() {
-		int half = Math.max(this.font.width(identityName()),
-				Math.max(this.font.width(levelText()), this.font.width(essenceText()))) / 2;
+		int widest = Math.max(this.font.width(identityName()),
+				Math.max(this.font.width(levelText()), this.font.width(essenceText())));
+
+		// The badge is part of the block and can be wider than any of the lines, so it is
+		// measured with them. Leaving it out would clamp the text clear of the edge and
+		// then let the picture hang off it.
+		int half = Math.max(widest, this.classed ? IDENTITY_ICON_SIZE : 0) / 2;
 
 		int centred = (this.modelLeft + this.modelRight) / 2;
 		int rightmost = this.dividerX - EDGE_PADDING - half;
@@ -683,14 +758,18 @@ public class GrandCraftScreen extends Screen {
 	// -------------------------------------------------------------- class browsing
 
 	/**
-	 * The class browser that fills the right panel until a class is chosen: one class
-	 * at a time, an arrow either side, and the button that commits.
+	 * The class browser that fills the right panel until a class is chosen: one class at
+	 * a time, and the button that commits.
 	 *
-	 * <p>Laid out from <em>both</em> ends. The heading, name and description hang from
-	 * the top; Choose and the permanence line are anchored to the bottom. That is what
-	 * keeps the button still while cycling — the description is the only part whose
-	 * height varies, and growing it downwards would otherwise walk the button around
-	 * under the mouse.
+	 * <p>Reads top to bottom as <em>arrow, picture, arrow</em>, then the class name as a
+	 * title with its description beneath, then Choose and the warning. The arrows page
+	 * the picture; the words that describe a class sit together with the other words.
+	 *
+	 * <p>Laid out from <em>both</em> ends. The heading, picture, name and description
+	 * hang from the top; Choose and the permanence line are anchored to the bottom. That
+	 * is what keeps the button still while cycling — the description is the only part
+	 * whose height varies, and growing it downwards would otherwise walk the button
+	 * around under the mouse.
 	 */
 	private void buildClassBrowser() {
 		PlayerClass choice = previewClass();
@@ -699,7 +778,15 @@ public class GrandCraftScreen extends Screen {
 		addCentred(Component.translatable("screen.grandcraft.choose_class")
 				.withStyle(ChatFormatting.GOLD), centre, this.contentTop + PANEL_INSET);
 
-		int arrowY = this.contentTop + PANEL_INSET + ROW_HEIGHT + SECTION_GAP;
+		// The picture is what the arrows page through. It is not a widget — nothing
+		// hovers it and nothing clicks it — so it is drawn in extractRenderState, and
+		// these two fields are how that method learns where this layout put it.
+		this.browserIconLeft = centre - CLASS_ICON_SIZE / 2;
+		this.browserIconTop = this.contentTop + PANEL_INSET + ROW_HEIGHT + SECTION_GAP;
+
+		// Arrows centred against the icon's height rather than sharing its top edge:
+		// they are a third of its size, and aligning the tops would leave them floating.
+		int arrowY = this.browserIconTop + (CLASS_ICON_SIZE - ARROW_SIZE) / 2;
 
 		addRenderableWidget(Button.builder(
 						Component.translatable("screen.grandcraft.class_previous"),
@@ -713,15 +800,13 @@ public class GrandCraftScreen extends Screen {
 				.bounds(centre + ARROW_OFFSET, arrowY, ARROW_SIZE, ARROW_SIZE)
 				.build());
 
-		// Centred against the arrows rather than sitting on their top edge.
-		addCentred(choice.displayName().copy().withStyle(ChatFormatting.YELLOW),
-				centre, arrowY + (ARROW_SIZE - LINE_HEIGHT) / 2);
-
 		int permanentY = this.contentBottom - PANEL_INSET - LINE_HEIGHT;
 		int chooseY = permanentY - SECTION_GAP - BUTTON_HEIGHT;
 
+		// Red, not dark grey. This is the one irreversible thing on the screen and the
+		// old colour sat so close to the panel behind it that the warning went unread.
 		addCentred(Component.translatable("screen.grandcraft.class_permanent")
-				.withStyle(ChatFormatting.DARK_GRAY), centre, permanentY);
+				.withStyle(ChatFormatting.RED), centre, permanentY);
 
 		addRenderableWidget(Button.builder(
 						Component.translatable("screen.grandcraft.class_choose"),
@@ -730,9 +815,16 @@ public class GrandCraftScreen extends Screen {
 						CHOOSE_BUTTON_WIDTH, BUTTON_HEIGHT)
 				.build());
 
+		// The name moved out from between the arrows to here, where it reads as the
+		// description's title: the icon identifies the class at a glance and the words
+		// belong with the words.
+		int nameY = this.browserIconTop + CLASS_ICON_SIZE + SECTION_GAP * 2;
+
+		addCentred(choice.displayName().copy().withStyle(ChatFormatting.YELLOW), centre, nameY);
+
 		// Built last because it is the one part sized by its content, so it is the one
 		// that has to be told how much room the fixed furniture left it.
-		int descriptionTop = arrowY + ARROW_SIZE + SECTION_GAP * 2;
+		int descriptionTop = nameY + ROW_HEIGHT;
 		addDescription(choice, centre, descriptionTop, chooseY - SECTION_GAP - descriptionTop);
 	}
 
@@ -787,6 +879,21 @@ public class GrandCraftScreen extends Screen {
 	private PlayerClass previewClass() {
 		return PlayerClass.SELECTABLE.get(
 				Math.floorMod(this.previewIndex, PlayerClass.SELECTABLE.size()));
+	}
+
+	/**
+	 * The picture for a class, named after the class itself.
+	 *
+	 * <p>Derived from {@code getSerializedName} rather than held on the enum, so adding a
+	 * class needs a file rather than a file <em>and</em> a field — and a missing one shows
+	 * as the missing-texture chequer against a name that says exactly which PNG to supply.
+	 *
+	 * <p>Only ever called for {@code PlayerClass.SELECTABLE}, which is what the browser
+	 * cycles. Peasant has no icon and needs none: it is what you are before choosing, not
+	 * something you can pick.
+	 */
+	private static Identifier classIcon(PlayerClass playerClass) {
+		return GrandCraft.id("textures/gui/class/" + playerClass.getSerializedName() + ".png");
 	}
 
 	private boolean previewing() {
@@ -854,11 +961,27 @@ public class GrandCraftScreen extends Screen {
 						this.rightPanelCentre,
 						(this.contentTop + this.contentBottom - LINE_HEIGHT) / 2,
 						COMING_SOON_COLOUR);
+			} else {
+				// The whole texture into the icon's box: u and v are zero and the source
+				// size is given as the destination size, which is how vanilla asks for a
+				// sprite scaled to fit rather than a region cut out of one.
+				extractor.blit(RenderPipelines.GUI_TEXTURED, classIcon(previewClass()),
+						this.browserIconLeft, this.browserIconTop, 0.0F, 0.0F,
+						CLASS_ICON_SIZE, CLASS_ICON_SIZE, CLASS_ICON_SIZE, CLASS_ICON_SIZE);
 			}
 
 			InventoryScreen.extractEntityInInventoryFollowsMouse(extractor,
 					this.modelLeft, this.contentTop, this.modelRight, this.modelBottom,
 					this.modelSize, MODEL_Y_OFFSET, mouseX, mouseY, this.minecraft.player);
+
+			// The badge sits between the model and the name it belongs to, so the left
+			// column reads picture, badge, class, level, progress.
+			if (this.classed) {
+				extractor.blit(RenderPipelines.GUI_TEXTURED, classIcon(this.shownClass),
+						this.identityIconLeft, this.identityIconTop, 0.0F, 0.0F,
+						IDENTITY_ICON_SIZE, IDENTITY_ICON_SIZE,
+						IDENTITY_ICON_SIZE, IDENTITY_ICON_SIZE);
+			}
 		}
 
 		// Last, so the widgets sit on top of the panel and the model.
