@@ -6,12 +6,11 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Util;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 
 /**
  * Draws the quick-slot wheel. {@link RadialMenu} owns where the wedges are and what
@@ -26,10 +25,11 @@ import net.minecraft.world.item.Items;
  *
  * <h2>The inventory wedge</h2>
  *
- * Drawn as an ordinary item, currently a vanilla chest, and named in exactly one
- * place: {@link #INVENTORY_ICON_ITEM}. When the authored icon arrives, that constant
- * and the one {@code item} call that uses it become a {@code blit} — the wedge's
- * position, box and highlight all stay as they are.
+ * The one wedge that is a button rather than a slot, so it is the one wedge drawn as a
+ * texture instead of through the item renderer: the authored icon at
+ * {@link #INVENTORY_ICON}, blitted into the same 16x16 the items get so the ring reads
+ * as one row of equal things. It carries no count and no durability bar for the same
+ * reason — it is not a stack the player owns.
  *
  * <h2>Fade in, but not out</h2>
  *
@@ -41,24 +41,9 @@ import net.minecraft.world.item.Items;
 public final class RadialMenuElement implements HudElement {
 	public static final Identifier ID = GrandCraft.id("radial_menu");
 
-	/**
-	 * The inventory button's icon. A vanilla chest stands in until the authored one
-	 * arrives; this is the only place either is named.
-	 */
-	private static final Item INVENTORY_ICON_ITEM = Items.CHEST;
-
-	/**
-	 * Built on first draw, never at class-load.
-	 *
-	 * <p><strong>{@code getDefaultInstance()} cannot be called from a static
-	 * initializer in client code.</strong> The client entrypoint runs from inside
-	 * {@code Minecraft}'s constructor, and constructing an {@code ItemStack} there
-	 * dies with {@code NullPointerException: Components not bound yet} — the item
-	 * exists, but its data components have not been attached to the holder yet. This
-	 * class is instantiated from that entrypoint to be registered as a HUD element, so
-	 * its own {@code <clinit>} runs inside that window. Rendering is safely past it.
-	 */
-	private static ItemStack inventoryIcon = ItemStack.EMPTY;
+	/** The inventory button's icon, named in exactly one place. */
+	private static final Identifier INVENTORY_ICON =
+			GrandCraft.id("textures/gui/radial/inventory.png");
 
 	/** Distance from the screen centre to the middle of a slot box. */
 	private static final int RADIUS = 62;
@@ -122,27 +107,29 @@ public final class RadialMenuElement implements HudElement {
 				continue;
 			}
 
+			int itemX = left + (BOX - ITEM) / 2;
+			int itemY = top + (BOX - ITEM) / 2;
+
+			if (inventoryWedge) {
+				// The whole texture into the item's box: u and v zero and the source size
+				// given as the destination size, which asks for the sprite scaled to fit
+				// rather than a region cut out of it.
+				graphics.blit(RenderPipelines.GUI_TEXTURED, INVENTORY_ICON,
+						itemX, itemY, 0.0F, 0.0F, ITEM, ITEM, ITEM, ITEM);
+				continue;
+			}
+
 			// Items ignore the fade: the extract pipeline draws them through the item
 			// renderer rather than as tinted quads, and half of a fade this short is a
 			// single frame. They appear with the boxes and that is close enough.
-			ItemStack stack = inventoryWedge
-					? inventoryIcon()
-					: player.getInventory().getItem(slot);
+			ItemStack stack = player.getInventory().getItem(slot);
 
 			if (stack.isEmpty()) {
 				continue;
 			}
 
-			int itemX = left + (BOX - ITEM) / 2;
-			int itemY = top + (BOX - ITEM) / 2;
-
 			graphics.item(player, stack, itemX, itemY, wedge);
-
-			// The chest is a button, not a stack the player owns: a count or a
-			// durability bar on it would be describing the wrong thing.
-			if (!inventoryWedge) {
-				graphics.itemDecorations(client.font, stack, itemX, itemY);
-			}
+			graphics.itemDecorations(client.font, stack, itemX, itemY);
 		}
 
 		extractAimMarker(graphics, centreX, centreY, fade);
@@ -197,15 +184,6 @@ public final class RadialMenuElement implements HudElement {
 		if (!stack.isEmpty()) {
 			graphics.centeredText(client.font, stack.getHoverName(), centreX, y, COLOUR_NAME);
 		}
-	}
-
-	/** The chest stack, built the first time the wheel is actually drawn. */
-	private static ItemStack inventoryIcon() {
-		if (inventoryIcon.isEmpty()) {
-			inventoryIcon = INVENTORY_ICON_ITEM.getDefaultInstance();
-		}
-
-		return inventoryIcon;
 	}
 
 	/** Wedge 0 is up and they run clockwise, which is what puts the button at six. */

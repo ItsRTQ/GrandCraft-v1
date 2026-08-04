@@ -20,7 +20,8 @@
 		"MinecraftUseItemMixin",
 		"MouseHandlerRadialMixin",
 		"PlayerAttackStrengthMixin",
-		"PlayerModelMixin"
+		"PlayerModelMixin",
+		"TitleScreenMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

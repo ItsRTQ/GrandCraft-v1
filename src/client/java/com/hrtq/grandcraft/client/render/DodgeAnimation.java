@@ -15,20 +15,30 @@ import net.minecraft.client.model.HumanoidModel;
  * <p>The animator exported four, one per direction, under the names they carry in
  * Blockbench. Those names are used verbatim rather than renamed on the way in, so a
  * re-export drops straight over the resource with nothing to rename — including the
- * two that are inconsistently spelled.
+ * misspelling of "dodge" they all share.
+ *
+ * <p><strong>The names change between deliveries, and only these four constants care.</strong>
+ * The 2026-08-03 export renamed every clip ({@code dogde_back1} → {@code dogde_back},
+ * {@code animation_side_left} → {@code dogde_side_left}, {@code right} →
+ * {@code dogde_right}, {@code animation_front} → {@code dogde_front}) without changing a
+ * single keyframe time or length. A clip that fails to resolve plays nothing at all, so
+ * check these first when a re-export makes the dodge go still.
  *
  * <p><strong>Three of the four are in use.</strong> The forward direction plays the
  * backstep clip instead of the authored forward one — see {@link #FRONT}.
  */
 public final class DodgeAnimation {
-	private static final String BACK = "dogde_back1";
+	private static final String BACK = "dogde_back";
 
 	/**
 	 * <strong>The forward dodge deliberately plays the backstep clip.</strong> Not a
 	 * placeholder left behind by accident — the user's call after seeing both.
 	 *
-	 * <p>The authored forward clip is {@code animation_front}, and it is still in the
-	 * resource; restoring it is this one line. What is wrong with it is not a runtime
+	 * <p>The authored forward clip is {@code dogde_front}, and it is still in the
+	 * resource; restoring it is this one line. <strong>The 2026-08-03 re-export did not
+	 * change what made it read as a dive</strong> — it moved that clip's arms by a pixel
+	 * or two and left the -67.4° chest pitch and the eleven-pixel chest translation
+	 * exactly as they were, so the substitution below still stands. What is wrong with it is not a runtime
 	 * fault: it composes {@code torso} +15° with {@code Upperbody} -67.4° into -52° of
 	 * net pitch, and on the animator's rig that reads as a dive because the chest also
 	 * translates eleven pixels forward. Vanilla's torso cannot translate — it is a loose
@@ -42,8 +52,8 @@ public final class DodgeAnimation {
 	 */
 	private static final String FRONT = BACK;
 
-	private static final String LEFT = "animation_side_left";
-	private static final String RIGHT = "right";
+	private static final String LEFT = "dogde_side_left";
+	private static final String RIGHT = "dogde_right";
 
 	/** Half-width of the arc that counts as dodging straight ahead, or straight back. */
 	private static final float FORWARD_ARC = 45.0F;
