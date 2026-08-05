@@ -1,6 +1,9 @@
 package com.hrtq.grandcraft.client.hud;
 
+import com.hrtq.grandcraft.client.ClientMana;
 import com.hrtq.grandcraft.client.ClientStamina;
+import java.util.function.Function;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 
 /**
  * Where the player's three resource bars sit, and in what order.
@@ -35,6 +38,19 @@ import com.hrtq.grandcraft.client.ClientStamina;
  * leaving a hole — see {@link #manaRow()}. A configured mana pool of zero is the case
  * that matters: it is the feature's off switch, and an empty bar that never moves
  * implies a resource the player does not have.
+ *
+ * <h2>Vanilla's hunger bar is in this column too</h2>
+ * Moved here rather than left in its own corner, so everything the player reads about
+ * themselves is in one place (user, 2026-08-04). It is vanilla's element, translated —
+ * see {@link #intoColumn()} — not a reimplementation, so the icons, the saturation
+ * shake and the hunger-effect variant all keep working without being rebuilt here.
+ *
+ * <p>It conveniently shares this column's measurements already: a vanilla status row is
+ * 81x9, which is exactly what the artist authored the other three bars at.
+ *
+ * <p><strong>Armour and air are left where vanilla puts them.</strong> Neither is a
+ * GrandCraft resource, both are conditional, and moving them would mean owning two more
+ * layouts for rows that are usually absent.
  */
 public final class HudBars {
 	/**
@@ -92,5 +108,60 @@ public final class HudBars {
 	 */
 	public static int manaRow() {
 		return staminaRow() + (ClientStamina.hasData() ? 1 : 0);
+	}
+
+	/**
+	 * Hunger, under mana — vanilla's own bar, moved into this column so the player's
+	 * readouts are in one place rather than two (user, 2026-08-04).
+	 *
+	 * <p>Closes up behind mana exactly as mana closes up behind stamina, and for the
+	 * same reason.
+	 */
+	public static int foodRow() {
+		return manaRow() + (ClientMana.hasData() ? 1 : 0);
+	}
+
+	// ------------------------------------------------- moving vanilla's hunger bar
+
+	/**
+	 * Where vanilla puts a right-hand status row, measured from the screen.
+	 *
+	 * <p>From {@code Hud.extractPlayerHealth}: rows are anchored at
+	 * {@code guiWidth / 2 ± 91} with the first at {@code guiHeight - 39}, and one row is
+	 * {@link #BAR_WIDTH} x {@link #BAR_HEIGHT}. The hunger bar is right-aligned, so its
+	 * left edge is the anchor less the row width.
+	 *
+	 * <p>These two are vanilla's numbers, not ours. If the hunger bar ever lands in the
+	 * wrong place after a Minecraft update, they are what changed.
+	 */
+	private static final int VANILLA_ROW_ANCHOR = 91;
+	private static final int VANILLA_FIRST_ROW_BASELINE = 39;
+
+	/**
+	 * Wraps vanilla's hunger bar so it draws in this column instead of its own corner.
+	 *
+	 * <p>Handed to {@code HudElementRegistry.replaceElement}. A translation rather than
+	 * a reimplementation: vanilla keeps drawing the icons, the shake when saturation is
+	 * empty, and the hunger-effect variant — all of which would otherwise have to be
+	 * rebuilt here and kept in step forever.
+	 *
+	 * <p>The offset is computed per frame because both ends of it move: vanilla's anchor
+	 * follows the window size, and {@link #foodRow()} follows whether the bars above it
+	 * are being drawn.
+	 *
+	 * <p>Pushed and popped around the call, so nothing after it inherits the offset.
+	 */
+	public static Function<HudElement, HudElement> intoColumn() {
+		return original -> (graphics, delta) -> {
+			int vanillaLeft = graphics.guiWidth() / 2 + VANILLA_ROW_ANCHOR - BAR_WIDTH;
+			int vanillaTop = graphics.guiHeight() - VANILLA_FIRST_ROW_BASELINE;
+
+			graphics.pose().pushMatrix();
+			graphics.pose().translate(left() - vanillaLeft, top(foodRow()) - vanillaTop);
+
+			original.extractRenderState(graphics, delta);
+
+			graphics.pose().popMatrix();
+		};
 	}
 }

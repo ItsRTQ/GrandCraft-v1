@@ -4,6 +4,7 @@ import com.hrtq.grandcraft.network.ApplyLevelConfigPayload;
 import com.hrtq.grandcraft.progression.LevelSettings;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.ScrollableLayout;
 import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.layouts.FrameLayout;
@@ -34,6 +35,20 @@ public class LevelConfigScreen extends Screen {
 	private static final int CELL_SPACING = 4;
 	private static final int SECTION_SPACING = 8;
 
+	/**
+	 * Vertical space the fixed furniture needs: the title, the button row and the gaps
+	 * around them, plus a margin. Subtracted from the window height to decide how tall
+	 * the field list may grow before it scrolls.
+	 *
+	 * <p>Smaller than {@code WeaponConfigScreen}'s because this screen has no tab row
+	 * and no description under it. Over-reserving costs a little scroll; under-reserving
+	 * is the clipping this exists to stop.
+	 */
+	private static final int CHROME_HEIGHT = 80;
+
+	/** Never shrink the field list to nothing, however short the window is. */
+	private static final int MIN_CONTENT_HEIGHT = 60;
+
 	private TunableField baseCost;
 	private TunableField costPerLevel;
 	private TunableField dropWeight1;
@@ -42,6 +57,10 @@ public class LevelConfigScreen extends Screen {
 	private TunableField statPointsPerLevel;
 	private TunableField milestoneInterval;
 	private TunableField poolPointsPerMilestone;
+	private TunableField skillTier1Level;
+	private TunableField skillTier2Level;
+	private TunableField skillTier3Level;
+	private TunableField skillTier4Level;
 
 	/** What the fields held before a rebuild, so a resize does not discard edits. */
 	private LevelSettings working;
@@ -93,9 +112,37 @@ public class LevelConfigScreen extends Screen {
 
 		this.poolPointsPerMilestone = unit(seed.poolPointsPerMilestone(),
 				LevelSettings.MAX_POINTS, "points");
-		addRow(grid, row, "pool_points_per_milestone", this.poolPointsPerMilestone);
+		row = addRow(grid, row, "pool_points_per_milestone", this.poolPointsPerMilestone);
 
-		root.addChild(grid);
+		// The four skill-line gates. On this screen rather than a screen of their own
+		// because they are only judgeable against the cost curve above them — how long a
+		// gate takes is the curve's answer, not the gate's, and splitting them would put
+		// the two halves of one decision on two screens.
+		this.skillTier1Level = level(seed.skillTier1Level());
+		row = addRow(grid, row, "skill_tier_1_level", this.skillTier1Level);
+
+		this.skillTier2Level = level(seed.skillTier2Level());
+		row = addRow(grid, row, "skill_tier_2_level", this.skillTier2Level);
+
+		this.skillTier3Level = level(seed.skillTier3Level());
+		row = addRow(grid, row, "skill_tier_3_level", this.skillTier3Level);
+
+		this.skillTier4Level = level(seed.skillTier4Level());
+		addRow(grid, row, "skill_tier_4_level", this.skillTier4Level);
+
+		// Scrolled, for the reason WeaponConfigScreen already documents: eight rows was
+		// enough to clip off the bottom of a small window there, and the four skill gates
+		// take this screen to twelve. The container is a widget in its own right and
+		// renders and routes events to its contents, so only it is registered below —
+		// the fields inside must not also be added or they would draw a second time
+		// outside the clip.
+		ScrollableLayout values = new ScrollableLayout(this.minecraft, grid,
+				Math.max(MIN_CONTENT_HEIGHT, this.height - CHROME_HEIGHT),
+				// Reserve the scrollbar's width on both sides, so the rows stay centred
+				// whether or not the bar is showing.
+				ScrollableLayout.ReserveStrategy.BOTH);
+
+		root.addChild(values);
 		root.addChild(buildButtons());
 
 		root.arrangeElements();
@@ -124,6 +171,16 @@ public class LevelConfigScreen extends Screen {
 	/** A relative share of the drop roll, not a percentage — see the tooltips. */
 	private TunableField weight(int value) {
 		return unit(value, LevelSettings.MAX_WEIGHT, "weight");
+	}
+
+	/**
+	 * An Essence Power level a skill-line tier waits for.
+	 *
+	 * <p>Floor of zero rather than one, matching the server's clamp: zero is how a tier
+	 * is opened outright, which is the quickest way to look at what is in it.
+	 */
+	private TunableField level(int value) {
+		return unit(value, LevelSettings.MAX_SKILL_GATE, "level");
 	}
 
 	/** The unit key names the field for narration; every field is a whole number. */
@@ -166,7 +223,11 @@ public class LevelConfigScreen extends Screen {
 				this.dropWeight3.intValue(),
 				this.statPointsPerLevel.intValue(),
 				this.milestoneInterval.intValue(),
-				this.poolPointsPerMilestone.intValue());
+				this.poolPointsPerMilestone.intValue(),
+				this.skillTier1Level.intValue(),
+				this.skillTier2Level.intValue(),
+				this.skillTier3Level.intValue(),
+				this.skillTier4Level.intValue());
 	}
 
 	/** Back to the mod's defaults, not to what the screen opened with. */

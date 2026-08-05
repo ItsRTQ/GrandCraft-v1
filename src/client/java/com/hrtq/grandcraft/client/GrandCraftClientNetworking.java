@@ -3,14 +3,17 @@ package com.hrtq.grandcraft.client;
 import com.hrtq.grandcraft.client.gui.CombatConfigScreen;
 import com.hrtq.grandcraft.client.gui.GameConfigScreen;
 import com.hrtq.grandcraft.client.gui.LevelConfigScreen;
+import com.hrtq.grandcraft.client.gui.SkillConfigScreen;
 import com.hrtq.grandcraft.client.gui.StatConfigScreen;
 import com.hrtq.grandcraft.client.gui.WeaponConfigScreen;
 import com.hrtq.grandcraft.network.AttackLockoutPayload;
+import com.hrtq.grandcraft.network.CombatMasterPayload;
 import com.hrtq.grandcraft.network.CombatPhasePayload;
 import com.hrtq.grandcraft.network.GameConfigPayload;
 import com.hrtq.grandcraft.network.LevelConfigPayload;
 import com.hrtq.grandcraft.network.ManaPayload;
 import com.hrtq.grandcraft.network.OpenCombatConfigPayload;
+import com.hrtq.grandcraft.network.OpenSkillConfigPayload;
 import com.hrtq.grandcraft.network.StaminaPayload;
 import com.hrtq.grandcraft.network.StatConfigPayload;
 import com.hrtq.grandcraft.network.WeaponConfigPayload;
@@ -49,6 +52,17 @@ public final class GrandCraftClientNetworking {
 
 		ClientPlayNetworking.registerGlobalReceiver(ManaPayload.TYPE, (payload, context) ->
 				ClientMana.accept(payload, Util.getMillis()));
+
+		// Two messages per window and none for expiry — see CombatMasterPayload. The
+		// deadline is worked out here, once, from the length the server actually
+		// granted.
+		ClientPlayNetworking.registerGlobalReceiver(CombatMasterPayload.TYPE, (payload, context) ->
+				ClientCombatMaster.accept(payload.remainingTicks(), Util.getMillis()));
+
+		ClientPlayNetworking.registerGlobalReceiver(OpenSkillConfigPayload.TYPE, (payload, context) ->
+				// Server-held settings, so this only ever arrives for the admin who ran
+				// the command: there is nothing to store, only a screen to open.
+				context.client().setScreenAndShow(new SkillConfigScreen(payload.settings())));
 
 		ClientPlayNetworking.registerGlobalReceiver(GameConfigPayload.TYPE, (payload, context) -> {
 			// One packet serves both jobs: every client is told the new values so it

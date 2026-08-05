@@ -5,6 +5,9 @@ import com.hrtq.grandcraft.network.AttackMissPayload;
 import com.hrtq.grandcraft.network.DodgePayload;
 import com.hrtq.grandcraft.network.GuardPayload;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import com.hrtq.grandcraft.skill.CombatMaster;
+import com.hrtq.grandcraft.skill.SkillMilestones;
+import com.hrtq.grandcraft.skill.SkillObjective;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
@@ -228,7 +231,17 @@ public final class GrandCraftCombat {
 			controller.absorbBlockedHit(entity, profile, amount);
 
 			// Read after absorbing, because that is what may have broken the guard.
-			playGuardSound(entity, controller.isGuarding()
+			boolean guardHeld = controller.isGuarding();
+
+			// A clean block — absorbed and still standing — is what earns the Warrior's
+			// Combat Master window. Deliberately inside the guardHeld branch: the hit
+			// that empties stamina and breaks the guard earns nothing, which keeps a
+			// guard break the punishment block was tuned around.
+			if (guardHeld) {
+				CombatMaster.onCleanBlock(entity);
+			}
+
+			playGuardSound(entity, guardHeld
 					? SoundEvents.SHIELD_BLOCK
 					: SoundEvents.SHIELD_BREAK);
 
@@ -370,6 +383,12 @@ public final class GrandCraftCombat {
 				// indicator already knows how to draw a lockout — so the crosshair
 				// refills as the roll ends, for free.
 				notifyLockout(player, controller);
+
+				// Inside the accepted branch on purpose: a dodge the server refused —
+				// airborne, exhausted, already rolling — is not one the character made,
+				// and counting it would let a milestone be farmed by holding the key
+				// against an empty stamina pool.
+				SkillMilestones.count(player, SkillObjective.EVADE, 1);
 			}
 		});
 	}

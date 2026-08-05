@@ -33,7 +33,11 @@ public record LevelSettings(
 		int dropWeight3,
 		int statPointsPerLevel,
 		int milestoneInterval,
-		int poolPointsPerMilestone) {
+		int poolPointsPerMilestone,
+		int skillTier1Level,
+		int skillTier2Level,
+		int skillTier3Level,
+		int skillTier4Level) {
 
 	/**
 	 * Level 1 costs 10 Essence, and each level after it costs 5 more — so level 5,
@@ -45,8 +49,14 @@ public record LevelSettings(
 	 * Per-mob and boss overrides are expected later; this table is where the
 	 * <em>shape</em> lives, and a per-mob figure would sit alongside it rather than
 	 * replace it.
+	 *
+	 * <p>The four skill gates are the user's: 5, 25, 50, 75. <strong>Against this cost
+	 * curve those are a long way apart</strong> — cumulatively about 60 kills, 1,500,
+	 * 5,600 and 12,400 — so they and the curve are meant to be judged together, which
+	 * is why both are on the same config screen.
 	 */
-	public static final LevelSettings DEFAULT = new LevelSettings(10, 5, 85, 12, 3, 1, 5, 3);
+	public static final LevelSettings DEFAULT =
+			new LevelSettings(10, 5, 85, 12, 3, 1, 5, 3, 5, 25, 50, 75);
 
 	/** Bounds shared by the config fields and the server-side clamp. */
 	public static final int MAX_COST = 100_000;
@@ -54,6 +64,13 @@ public record LevelSettings(
 	public static final int MAX_WEIGHT = 10_000;
 	public static final int MAX_POINTS = 100;
 	public static final int MAX_MILESTONE_INTERVAL = 100;
+
+	/**
+	 * Ceiling on a skill gate. Matches the bound on {@code /grandcraft set essence},
+	 * so a gate can always be reached by the command that exists to reach it — a gate
+	 * above the highest settable level would be untestable.
+	 */
+	public static final int MAX_SKILL_GATE = 1000;
 
 	/**
 	 * The largest Essence value a single orb can be worth, which is also how many
@@ -117,6 +134,28 @@ public record LevelSettings(
 		return level > 0 && level % interval == 0 ? this.poolPointsPerMilestone : 0;
 	}
 
+	/**
+	 * The Essence Power level a skill-line node of the given tier requires, tier being
+	 * zero-based and shallowest first.
+	 *
+	 * <p>Four named fields rather than a list because every other tunable in this mod
+	 * is a named field with its own config row, and a list would need a different
+	 * editor for no gain at a fixed count of four.
+	 *
+	 * <p>Out-of-range tiers answer with the deepest gate rather than throwing: the only
+	 * way to ask for one is to have changed {@code SkillTree.NODES_PER_LINE} without
+	 * adding a field here, and a node that reads as harder than the last one is a
+	 * visible prompt to do that, where an exception in a render pass is a crash.
+	 */
+	public int skillGateLevel(int tier) {
+		return switch (tier) {
+			case 0 -> this.skillTier1Level;
+			case 1 -> this.skillTier2Level;
+			case 2 -> this.skillTier3Level;
+			default -> this.skillTier4Level;
+		};
+	}
+
 	public static final Codec<LevelSettings> CODEC = RecordCodecBuilder.create(instance -> instance.group(
 			Codec.INT.optionalFieldOf("base_cost", DEFAULT.baseCost())
 					.forGetter(LevelSettings::baseCost),
@@ -133,7 +172,15 @@ public record LevelSettings(
 			Codec.INT.optionalFieldOf("milestone_interval", DEFAULT.milestoneInterval())
 					.forGetter(LevelSettings::milestoneInterval),
 			Codec.INT.optionalFieldOf("pool_points_per_milestone", DEFAULT.poolPointsPerMilestone())
-					.forGetter(LevelSettings::poolPointsPerMilestone)
+					.forGetter(LevelSettings::poolPointsPerMilestone),
+			Codec.INT.optionalFieldOf("skill_tier_1_level", DEFAULT.skillTier1Level())
+					.forGetter(LevelSettings::skillTier1Level),
+			Codec.INT.optionalFieldOf("skill_tier_2_level", DEFAULT.skillTier2Level())
+					.forGetter(LevelSettings::skillTier2Level),
+			Codec.INT.optionalFieldOf("skill_tier_3_level", DEFAULT.skillTier3Level())
+					.forGetter(LevelSettings::skillTier3Level),
+			Codec.INT.optionalFieldOf("skill_tier_4_level", DEFAULT.skillTier4Level())
+					.forGetter(LevelSettings::skillTier4Level)
 	).apply(instance, LevelSettings::new));
 
 	public static final StreamCodec<ByteBuf, LevelSettings> STREAM_CODEC = StreamCodec.of(
@@ -146,9 +193,14 @@ public record LevelSettings(
 				buf.writeInt(settings.statPointsPerLevel());
 				buf.writeInt(settings.milestoneInterval());
 				buf.writeInt(settings.poolPointsPerMilestone());
+				buf.writeInt(settings.skillTier1Level());
+				buf.writeInt(settings.skillTier2Level());
+				buf.writeInt(settings.skillTier3Level());
+				buf.writeInt(settings.skillTier4Level());
 			},
 			// Java evaluates arguments left to right, so this matches the writes above.
 			buf -> new LevelSettings(
+					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(),
 					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(),
 					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt()));
 
@@ -168,7 +220,16 @@ public record LevelSettings(
 				clamp(this.statPointsPerLevel, 0, MAX_POINTS),
 				// Floor of one: poolPointsFor takes a modulus by this.
 				clamp(this.milestoneInterval, 1, MAX_MILESTONE_INTERVAL),
-				clamp(this.poolPointsPerMilestone, 0, MAX_POINTS));
+				clamp(this.poolPointsPerMilestone, 0, MAX_POINTS),
+				// Floor of zero, not one: a gate of 0 is how an admin opens a whole tier
+				// immediately, which is the fastest way to look at a node's contents.
+				// Deliberately not forced to ascend either — a tester who wants tier 4
+				// before tier 2 is allowed to say so, and the sheet still reads correctly
+				// because each node asks its own tier for its own gate.
+				clamp(this.skillTier1Level, 0, MAX_SKILL_GATE),
+				clamp(this.skillTier2Level, 0, MAX_SKILL_GATE),
+				clamp(this.skillTier3Level, 0, MAX_SKILL_GATE),
+				clamp(this.skillTier4Level, 0, MAX_SKILL_GATE));
 	}
 
 	private static int clamp(int value, int min, int max) {

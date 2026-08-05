@@ -3,9 +3,12 @@ package com.hrtq.grandcraft.client;
 import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.client.gui.GrandCraftScreen;
 import com.hrtq.grandcraft.client.hud.RadialMenu;
+import com.hrtq.grandcraft.network.UseSkillPayload;
+import com.hrtq.grandcraft.skill.SkillLoadout;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.glfw.GLFW;
@@ -51,6 +54,34 @@ public final class GrandCraftKeyMappings {
 			GLFW.GLFW_KEY_E,
 			CATEGORY));
 
+	/**
+	 * The four ability keys, {@code 1} through {@code 4}. Slot 3 — key {@code 4} — is
+	 * the ultimate.
+	 *
+	 * <p><strong>The number keys were already free.</strong> {@link #register} has
+	 * drained {@code options.keyHotbarSlots} every tick since the radial wheel replaced
+	 * the hotbar, because there was no longer anything for them to select. So these need
+	 * no new suppression: 26.2 holds a <em>list</em> of mappings per key and delivers the
+	 * press to all of them, and vanilla's half is already being thrown away.
+	 *
+	 * <p>An array rather than four fields because every use of them is a loop — register
+	 * them, drain them, send the slot. The index <em>is</em> the slot, which is what
+	 * keeps that true.
+	 */
+	public static final KeyMapping[] ABILITY_SLOTS = new KeyMapping[SkillLoadout.SLOTS];
+
+	static {
+		int[] keys = { GLFW.GLFW_KEY_1, GLFW.GLFW_KEY_2, GLFW.GLFW_KEY_3, GLFW.GLFW_KEY_4 };
+
+		for (int slot = 0; slot < ABILITY_SLOTS.length; slot++) {
+			ABILITY_SLOTS[slot] = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+					"key.grandcraft.ability_" + (slot + 1),
+					InputConstants.Type.KEYSYM,
+					keys[slot],
+					CATEGORY));
+		}
+	}
+
 	private GrandCraftKeyMappings() {
 	}
 
@@ -75,6 +106,36 @@ public final class GrandCraftKeyMappings {
 		}
 
 		return InputConstants.isKeyDown(client.getWindow(), bound.getValue());
+	}
+
+	/**
+	 * Turns presses of the four ability keys into one request each.
+	 *
+	 * <p>Drained the same way the dodge key is, and for the same reason: a press
+	 * buffered through a lag spike must not fire the ability twice the moment the game
+	 * catches up. One send per tick per slot at most, however many clicks were queued.
+	 *
+	 * <p>The client decides nothing. It does not check what is equipped, whether it is
+	 * unlocked, or whether the press should do anything — it reports the key, and the
+	 * server answers from its own record. That is the same no-prediction contract every
+	 * other verb in this mod keeps.
+	 */
+	private static void sendAbilityPresses(Minecraft client) {
+		if (client.player == null) {
+			return;
+		}
+
+		for (int slot = 0; slot < ABILITY_SLOTS.length; slot++) {
+			boolean pressed = false;
+
+			while (ABILITY_SLOTS[slot].consumeClick()) {
+				pressed = true;
+			}
+
+			if (pressed) {
+				ClientPlayNetworking.send(new UseSkillPayload(slot));
+			}
+		}
 	}
 
 	public static void register() {
@@ -120,6 +181,8 @@ public final class GrandCraftKeyMappings {
 					dodged = ClientDodge.request(client);
 				}
 			}
+
+			sendAbilityPresses(client);
 		});
 	}
 }

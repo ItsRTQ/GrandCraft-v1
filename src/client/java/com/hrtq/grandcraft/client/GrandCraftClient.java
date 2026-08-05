@@ -1,7 +1,9 @@
 package com.hrtq.grandcraft.client;
 
 import com.hrtq.grandcraft.client.animation.GrandCraftAnimations;
+import com.hrtq.grandcraft.client.hud.AbilityBarElement;
 import com.hrtq.grandcraft.client.hud.HealthBarElement;
+import com.hrtq.grandcraft.client.hud.HudBars;
 import com.hrtq.grandcraft.client.hud.ManaBarElement;
 import com.hrtq.grandcraft.client.hud.RadialMenu;
 import com.hrtq.grandcraft.client.hud.RadialMenuElement;
@@ -100,6 +102,12 @@ public class GrandCraftClient implements ClientModInitializer {
 		// right-hand status row any more: the bars moved to the top-left corner, so
 		// reserving a row there would push the air bar up to clear a gap nothing fills.
 		// HudElementRegistry freezes once the client has started, well after this runs.
+		// Vanilla's hunger bar joins the column rather than staying in its own corner, so
+		// everything the player reads about themselves is in one place. Wrapped, not
+		// reimplemented — see HudBars.intoColumn(). It stays on its own layer, so it
+		// keeps obeying the same "show status bars?" rule as the three below it.
+		HudElementRegistry.replaceElement(VanillaHudElements.FOOD_BAR, HudBars.intoColumn());
+
 		HudElementRegistry.attachElementAfter(
 				VanillaHudElements.FOOD_BAR, HealthBarElement.ID, new HealthBarElement());
 		HudElementRegistry.attachElementAfter(
@@ -107,13 +115,41 @@ public class GrandCraftClient implements ClientModInitializer {
 		HudElementRegistry.attachElementAfter(
 				StaminaBarElement.ID, ManaBarElement.ID, new ManaBarElement());
 
-		// The wheel is deliberately NOT chained onto that column. The bars hang off the
-		// food bar so they inherit vanilla's "show status bars?" rule and vanish in
-		// creative and spectator; the wheel is a menu the player opened, and a menu
-		// that refuses to appear in creative is a bug. Attached after the held-item
-		// name instead, which puts it over the world and under chat.
+		// Removing the hotbar left a strip of nothing along the bottom with the
+		// experience bar floating above it. Push the experience bar and its level number
+		// down into that strip, which frees the row above for the ability bar — so the
+		// bottom of the screen reads ability bar, experience, edge.
+		//
+		// Wrapped rather than removed and reimplemented: the info bar has three modes in
+		// 26.2 (experience, jump meter, locator) and taking it over would mean owning all
+		// three forever. This is vanilla's own drawing, lower down.
+		HudElementRegistry.replaceElement(VanillaHudElements.INFO_BAR,
+				AbilityBarElement.shiftedBy(AbilityBarElement.XP_BAR_DROP));
+		HudElementRegistry.replaceElement(VanillaHudElements.EXPERIENCE_LEVEL,
+				AbilityBarElement.shiftedBy(AbilityBarElement.XP_BAR_DROP));
+
+		// And the held-item name goes up, out of the way. Vanilla draws it at
+		// guiHeight - 59, which is inside the ability bar — without this it would flash
+		// across the artwork every time the wheel changes the held item.
+		HudElementRegistry.replaceElement(VanillaHudElements.HELD_ITEM_TOOLTIP,
+				AbilityBarElement.shiftedBy(AbilityBarElement.HELD_ITEM_LIFT));
+
+		// The ability bar and the wheel are deliberately NOT on the status-bar column.
+		// The three resource bars hang off the food bar so they inherit vanilla's "show
+		// status bars?" rule and vanish in creative and spectator. That is right for a
+		// resource and wrong for these two: the wheel is a menu the player opened, and
+		// the ability bar says what four keys do — both are just as true in creative.
+		//
+		// Chaining the bar onto that column instead cost a debugging round: every
+		// element on it disappeared in a creative test world and read as a broken HUD.
+		//
+		// Chained explicitly rather than both hanging off the held-item name, so the
+		// order is stated rather than inherited from registration order — the wheel is
+		// drawn last and therefore over the bar, which is the way round it has to be.
 		HudElementRegistry.attachElementAfter(
-				VanillaHudElements.HELD_ITEM_TOOLTIP, RadialMenuElement.ID, new RadialMenuElement());
+				VanillaHudElements.HELD_ITEM_TOOLTIP, AbilityBarElement.ID, new AbilityBarElement());
+		HudElementRegistry.attachElementAfter(
+				AbilityBarElement.ID, RadialMenuElement.ID, new RadialMenuElement());
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.level == null) {
@@ -125,6 +161,7 @@ public class GrandCraftClient implements ClientModInitializer {
 				ClientStamina.clear();
 				ClientMana.clear();
 				ClientCombatPhases.clear();
+				ClientCombatMaster.clear();
 				ClientGuard.clear();
 				RadialMenu.clear();
 				ClientGameSettings.set(GameSettings.DEFAULT);

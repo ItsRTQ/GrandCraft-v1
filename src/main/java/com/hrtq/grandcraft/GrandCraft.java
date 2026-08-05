@@ -14,6 +14,7 @@ import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.progression.GrandCraftProgression;
 import com.hrtq.grandcraft.progression.LevelConfigFile;
+import com.hrtq.grandcraft.skill.SkillConfigFile;
 import com.hrtq.grandcraft.stats.GrandCraftAttributes;
 import com.hrtq.grandcraft.stats.GrandCraftStats;
 import com.hrtq.grandcraft.stats.StatConfigFile;
@@ -69,6 +70,7 @@ public class GrandCraft implements ModInitializer {
 		StatConfigFile.load();
 		LevelConfigFile.load();
 		WeaponConfigFile.load();
+		SkillConfigFile.load();
 	}
 
 	public static Identifier id(String path) {

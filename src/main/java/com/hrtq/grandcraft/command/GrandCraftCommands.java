@@ -5,6 +5,9 @@ import com.hrtq.grandcraft.network.GrandCraftNetworking;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.player.PlayerClass;
 import com.hrtq.grandcraft.progression.EssenceAwards;
+import com.hrtq.grandcraft.skill.SkillLoadouts;
+import com.hrtq.grandcraft.skill.SkillMilestones;
+import com.hrtq.grandcraft.skill.SkillObjective;
 import com.hrtq.grandcraft.stats.PlayerStats;
 import com.hrtq.grandcraft.progression.EssenceProgress;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -12,6 +15,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
+import java.util.Arrays;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -40,6 +44,13 @@ public final class GrandCraftCommands {
 	 */
 	private static final int MAX_GIVE_ESSENCE = 1_000_000;
 
+	/**
+	 * Bound on {@code /grandcraft give milestone}. No loop behind this one — it is a
+	 * single addition — so the bound is only there to keep the stored counter within
+	 * an int no matter how many times it is run.
+	 */
+	private static final int MAX_GIVE_MILESTONE = 1_000_000;
+
 	private GrandCraftCommands() {
 	}
 
@@ -50,6 +61,12 @@ public final class GrandCraftCommands {
 	private static final SuggestionProvider<CommandSourceStack> SUMMONABLE_MOBS =
 			(context, builder) -> SharedSuggestionProvider.suggest(
 					GrandCraftEntities.summonableNames(), builder);
+
+	/** The objectives a milestone can ask for, straight off the enum. */
+	private static final SuggestionProvider<CommandSourceStack> OBJECTIVES =
+			(context, builder) -> SharedSuggestionProvider.suggest(
+					Arrays.stream(SkillObjective.values()).map(SkillObjective::getSerializedName),
+					builder);
 
 	public static void register() {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -78,7 +95,19 @@ public final class GrandCraftCommands {
 												.then(Commands.argument("player", EntityArgument.player())
 														.executes(context -> giveEssence(context.getSource(),
 																EntityArgument.getPlayer(context, "player"),
-																IntegerArgumentType.getInteger(context, "amount")))))))
+																IntegerArgumentType.getInteger(context, "amount"))))))
+								// Skill-line milestones are counted in the hundreds, so without
+								// this a gate at tier 3 costs an evening of real kills to reach
+								// and cannot practically be tested at all.
+								.then(Commands.literal("milestone")
+										.then(Commands.argument("objective", StringArgumentType.word())
+												.suggests(OBJECTIVES)
+												.then(Commands.argument("amount", IntegerArgumentType.integer(1, MAX_GIVE_MILESTONE))
+														.then(Commands.argument("player", EntityArgument.player())
+																.executes(context -> giveMilestone(context.getSource(),
+																		EntityArgument.getPlayer(context, "player"),
+																		StringArgumentType.getString(context, "objective"),
+																		IntegerArgumentType.getInteger(context, "amount"))))))))
 						.then(Commands.literal("reclass")
 								.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
 								.then(Commands.argument("player", EntityArgument.player())
@@ -92,6 +121,17 @@ public final class GrandCraftCommands {
 											// would hand a fresh peasant the stats of the character they
 											// used to be, bought with a class they no longer have.
 											EssenceAwards.reset(target);
+
+											// And what they had done towards their skill-lines, for the
+											// same reason: those counters were earned as somebody else,
+											// and leaving them would hand a fresh peasant a head start
+											// on a tree they cannot see yet.
+											SkillMilestones.reset(target);
+
+											// And what they had equipped. The stored paths name the old
+											// class's nodes and would resolve to nothing anyway, so this
+											// is about not leaving a record of a character who is gone.
+											SkillLoadouts.reset(target);
 
 											// Stats come from the class and the spent points, so this has
 											// to run after both have been cleared — one pass, covering
@@ -137,6 +177,12 @@ public final class GrandCraftCommands {
 										.executes(context -> {
 											ServerPlayer player = context.getSource().getPlayerOrException();
 											GrandCraftNetworking.sendWeaponConfig(player);
+											return 1;
+										}))
+								.then(Commands.literal("skills")
+										.executes(context -> {
+											ServerPlayer player = context.getSource().getPlayerOrException();
+											GrandCraftNetworking.sendSkillConfig(player);
 											return 1;
 										})))));
 	}
@@ -192,6 +238,35 @@ public final class GrandCraftCommands {
 		return 1;
 	}
 
+	/**
+	 * Credits progress towards one objective, exactly as playing would.
+	 *
+	 * <p>Goes through {@link SkillMilestones#count} rather than writing the attachment,
+	 * so the command cannot produce a state that play could not — the same contract
+	 * {@code give essence} has with {@code EssenceAwards.award}.
+	 *
+	 * <p>Reports the new total rather than only the amount added, because the number
+	 * that decides whether a node opened is the total.
+	 */
+	private static int giveMilestone(CommandSourceStack source, ServerPlayer target,
+			String objectiveName, int amount) throws CommandSyntaxException {
+		SkillObjective objective = SkillObjective.byId(objectiveName);
+
+		if (objective == null) {
+			// Hard failure rather than a silent no-op, as with an unknown mob: a typo
+			// that quietly counts nothing is indistinguishable from a broken gate.
+			throw UNKNOWN_OBJECTIVE.create(objectiveName);
+		}
+
+		SkillMilestones.count(target, objective, amount);
+
+		int total = SkillMilestones.progressOf(target).get(objective);
+
+		source.sendSuccess(() -> Component.translatable("commands.grandcraft.give_milestone.success",
+				amount, objectiveName, target.getDisplayName(), total), true);
+		return 1;
+	}
+
 	private static int summon(CommandSourceStack source, String name) throws CommandSyntaxException {
 		EntityType<?> type = GrandCraftEntities.summonable(name);
 
@@ -219,4 +294,7 @@ public final class GrandCraftCommands {
 
 	private static final DynamicCommandExceptionType SUMMON_FAILED = new DynamicCommandExceptionType(
 			name -> Component.translatable("commands.grandcraft.summon.failed", name));
+
+	private static final DynamicCommandExceptionType UNKNOWN_OBJECTIVE = new DynamicCommandExceptionType(
+			name -> Component.translatable("commands.grandcraft.give_milestone.unknown", name));
 }

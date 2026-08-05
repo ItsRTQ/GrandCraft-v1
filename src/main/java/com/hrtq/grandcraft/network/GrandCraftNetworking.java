@@ -12,6 +12,10 @@ import com.hrtq.grandcraft.player.PlayerClass;
 import com.hrtq.grandcraft.progression.EssenceProgress;
 import com.hrtq.grandcraft.progression.LevelConfigFile;
 import com.hrtq.grandcraft.progression.LevelTuning;
+import com.hrtq.grandcraft.skill.SkillConfigFile;
+import com.hrtq.grandcraft.skill.SkillLoadouts;
+import com.hrtq.grandcraft.skill.SkillNode;
+import com.hrtq.grandcraft.skill.SkillTuning;
 import com.hrtq.grandcraft.stats.CharacterPool;
 import com.hrtq.grandcraft.stats.CharacterStat;
 import com.hrtq.grandcraft.stats.PlayerStats;
@@ -23,6 +27,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
@@ -75,15 +80,28 @@ public final class GrandCraftNetworking {
 				.register(ApplyWeaponConfigPayload.TYPE, ApplyWeaponConfigPayload.STREAM_CODEC);
 		PayloadTypeRegistry.clientboundPlay()
 				.register(WeaponConfigPayload.TYPE, WeaponConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(ToggleSkillPayload.TYPE, ToggleSkillPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(UseSkillPayload.TYPE, UseSkillPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(ApplySkillConfigPayload.TYPE, ApplySkillConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(OpenSkillConfigPayload.TYPE, OpenSkillConfigPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(CombatMasterPayload.TYPE, CombatMasterPayload.STREAM_CODEC);
 
 		registerClassSelection();
 		registerStatSpending();
 		registerPoolSpending();
+		registerSkillEquipping();
+		registerSkillUse();
 		registerCombatConfig();
 		registerGameConfig();
 		registerStatConfig();
 		registerLevelConfig();
 		registerWeaponConfig();
+		registerSkillConfig();
 
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			ServerPlayer player = handler.getPlayer();
@@ -124,6 +142,17 @@ public final class GrandCraftNetworking {
 
 	public static void sendLevelConfig(ServerPlayer player) {
 		ServerPlayNetworking.send(player, new LevelConfigPayload(LevelTuning.current(), true));
+	}
+
+	/**
+	 * Sent only to the admin who asked, unlike the level and stat ones.
+	 *
+	 * <p>The skill settings are server-held: nothing on a client reads them, because the
+	 * Combat Master badge is told how many ticks remain rather than how long a window
+	 * is. Same shape as the combat config for the same reason.
+	 */
+	public static void sendSkillConfig(ServerPlayer player) {
+		ServerPlayNetworking.send(player, new OpenSkillConfigPayload(SkillTuning.current()));
 	}
 
 	public static void sendWeaponConfig(ServerPlayer player) {
@@ -211,6 +240,97 @@ public final class GrandCraftNetworking {
 			// stamina that hang off the stat move the moment the point lands.
 			PlayerStats.applyBaselines(player);
 		});
+	}
+
+	/**
+	 * Equips or unequips the node a player clicked on the character sheet.
+	 *
+	 * <p>Every rule lives in {@code SkillLoadouts.toggle} — this only carries the answer
+	 * back. A refusal is told to the player rather than dropped silently: unlike a stat
+	 * point, the click has a visible target that simply would not change, and "the sheet
+	 * ignores me" is the report that would follow.
+	 *
+	 * <p>Above the action bar rather than in chat, because it is a response to something
+	 * the player is looking at and does not belong in a log they scroll back through.
+	 */
+	private static void registerSkillEquipping() {
+		ServerPlayNetworking.registerGlobalReceiver(ToggleSkillPayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+			SkillLoadouts.Refusal refusal = SkillLoadouts.toggle(player, payload.path());
+
+			if (refusal == null) {
+				return;
+			}
+
+			if (refusal == SkillLoadouts.Refusal.NO_SUCH_NODE) {
+				// Not reachable from the sheet, which only ever offers this character's own
+				// nodes — so it means a hand-built packet, and is worth a line in the log
+				// rather than a message to whoever sent it.
+				GrandCraft.LOGGER.warn("{} tried to equip an unknown skill node: {}",
+						player.getGameProfile().name(), payload.path());
+				return;
+			}
+
+			actionBar(player, Component.translatable(refusal == SkillLoadouts.Refusal.LOCKED
+					? "screen.grandcraft.sheet.equip.locked"
+					: "screen.grandcraft.sheet.equip.full"));
+		});
+	}
+
+	/**
+	 * Fires whatever is on one of the four ability keys.
+	 *
+	 * <p><strong>Nothing is bound to a node yet</strong>, so this proves the loop and
+	 * says so: key down, packet, the server resolving its own record of what is equipped,
+	 * and something the player can perceive. When abilities exist, this method is where
+	 * the name is turned into an effect, and everything either side of it is already
+	 * right.
+	 *
+	 * <p>The slot is re-checked against the loadout rather than trusted, and the node is
+	 * re-checked as unlocked — an ability equipped before an admin raised its gate must
+	 * stop working, not keep firing because it was equipped when the rule was looser.
+	 */
+	private static void registerSkillUse() {
+		ServerPlayNetworking.registerGlobalReceiver(UseSkillPayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+
+			if (!payload.isValidSlot()) {
+				GrandCraft.LOGGER.warn("{} sent an out-of-range skill slot: {}",
+						player.getGameProfile().name(), payload.slot());
+				return;
+			}
+
+			SkillNode node = SkillLoadouts.equipped(player, payload.slot());
+
+			// An empty key is silent. It is the normal state of three of the four for most
+			// of a character's life, and a refusal noise on every stray keypress would be
+			// the loudest thing in the game.
+			if (node == null || !SkillLoadouts.isUnlocked(player, node)) {
+				return;
+			}
+
+			// The placeholder, and deliberately a cheap one: a sound so the press is felt
+			// and a line naming what fired. No cooldown — a cooldown is a number, and
+			// there is nothing here yet to tune one against.
+			player.level().playSound(null, player.getX(), player.getY(), player.getZ(),
+					SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6F, 1.4F);
+
+			actionBar(player, Component.translatable(
+					"screen.grandcraft.sheet.skill_fired", payload.slot() + 1));
+		});
+	}
+
+	/**
+	 * A line above the hotbar, gone in a couple of seconds.
+	 *
+	 * <p>{@code Player.displayClientMessage} is gone in 26.2 — there is no
+	 * {@code (Component, boolean)} shortcut any more, and {@code sendSystemMessage}
+	 * goes to chat, which is the wrong place for a response to something the player is
+	 * looking at. The packet is what is left, and it is the same route
+	 * {@code EssenceAwards} already takes to put a level-up on screen.
+	 */
+	private static void actionBar(ServerPlayer player, Component text) {
+		player.connection.send(new ClientboundSetActionBarTextPacket(text));
 	}
 
 	/**
@@ -367,6 +487,33 @@ public final class GrandCraftNetworking {
 
 			GrandCraft.LOGGER.info("{} updated stat settings", player.getGameProfile().name());
 			player.sendSystemMessage(Component.translatable("commands.grandcraft.config.saved"));
+		});
+	}
+
+	/**
+	 * Applies edited skill settings.
+	 *
+	 * <p>Nothing is broadcast afterwards, which is what makes this shorter than the
+	 * level receiver: no client draws these numbers, so there is nobody to tell. A
+	 * window already running keeps the length it was granted with — it was resolved
+	 * when it opened — and the next one uses the new figures.
+	 */
+	private static void registerSkillConfig() {
+		ServerPlayNetworking.registerGlobalReceiver(ApplySkillConfigPayload.TYPE, (payload, context) -> {
+			ServerPlayer player = context.player();
+
+			// As with the other four: the command's permission guards the command, not
+			// this packet, which any connected client can send at any time.
+			if (!Commands.LEVEL_GAMEMASTERS.check(player.permissions())) {
+				GrandCraft.LOGGER.warn("{} tried to change skill settings without permission",
+						player.getGameProfile().name());
+				return;
+			}
+
+			// set() clamps, so a hand-built packet cannot grant a thousandfold blow or a
+			// window that never closes.
+			SkillTuning.set(payload.settings());
+			SkillConfigFile.save(SkillTuning.current());
 		});
 	}
 

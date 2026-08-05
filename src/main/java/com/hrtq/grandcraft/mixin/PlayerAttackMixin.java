@@ -1,8 +1,12 @@
 package com.hrtq.grandcraft.mixin;
 
 import com.hrtq.grandcraft.combat.MeleeDamage;
+import com.hrtq.grandcraft.skill.CombatMaster;
+import com.hrtq.grandcraft.skill.SkillMilestones;
+import com.hrtq.grandcraft.skill.SkillObjective;
 import com.hrtq.grandcraft.stats.WeaponScaling;
 import net.minecraft.core.Holder;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.attributes.Attribute;
@@ -88,7 +92,28 @@ public abstract class PlayerAttackMixin {
 		WeaponScaling scaling = MeleeDamage.forSwing(self, self.getMainHandItem());
 		MeleeDamage.reportSwing(self, scaling);
 
-		return scaling.damage();
+		// A swing that reached a target, counted for the skill-line milestones. Safe
+		// here for the reason the guard above exists: appliesTo is false on the client,
+		// so this cannot run on the prediction pass and cannot double-count.
+		//
+		// Deliberately not inside reportSwing, which looks like the seam and is not —
+		// it returns early when the weapon requirement is met, so it only ever sees
+		// penalised swings.
+		if (self instanceof ServerPlayer player) {
+			SkillMilestones.count(player, SkillObjective.STRIKE, 1);
+		}
+
+		// The Warrior's Combat Master window, spent here: this is a swing that reached a
+		// target, which is exactly what the user specified closes it — landing damage is
+		// not required. Reading and consuming are one call, so a swing cannot be
+		// empowered without spending the window or spend it without being empowered.
+		//
+		// Applied to the character's damage rather than to the finished figure, so it
+		// rides through the enchantment term and the damage event as a number of the
+		// same kind those already expect. It also reaches the defender's guard: a block
+		// costs stamina in proportion to the damage absorbed, so an empowered blow
+		// drains a raised guard half again as hard.
+		return scaling.damage() * CombatMaster.empowerSwing(self);
 	}
 
 	/**

@@ -8,18 +8,25 @@ import com.hrtq.grandcraft.client.ClientStatSettings;
 import com.hrtq.grandcraft.network.SelectClassPayload;
 import com.hrtq.grandcraft.network.SpendPoolPointPayload;
 import com.hrtq.grandcraft.network.SpendStatPointPayload;
+import com.hrtq.grandcraft.network.ToggleSkillPayload;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.player.PlayerClass;
 import com.hrtq.grandcraft.progression.EssenceProgress;
 import com.hrtq.grandcraft.progression.LevelSettings;
+import com.hrtq.grandcraft.skill.SkillLoadout;
+import com.hrtq.grandcraft.skill.SkillNode;
+import com.hrtq.grandcraft.skill.SkillProgress;
+import com.hrtq.grandcraft.skill.SkillTree;
 import com.hrtq.grandcraft.stats.CharacterPool;
 import com.hrtq.grandcraft.stats.CharacterStat;
 import com.hrtq.grandcraft.stats.StatBlock;
 import com.hrtq.grandcraft.stats.StatEffects;
 import com.hrtq.grandcraft.stats.StatSettings;
+import com.mojang.blaze3d.platform.InputConstants;
 import java.util.Locale;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.ChatFormatting;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
@@ -126,7 +133,6 @@ public class GrandCraftScreen extends Screen {
 	/** ARGB, and the alpha byte is not optional — 0x6E6E6E would be invisible. */
 	private static final int DIVIDER_COLOUR = 0xFF6E6E6E;
 	private static final int PANEL_COLOUR = 0x22FFFFFF;
-	private static final int COMING_SOON_COLOUR = 0xFFA0A0A0;
 
 	/** Vanilla draws the player at size 30 inside a 49x70 box; keep that ratio. */
 	private static final int MODEL_REFERENCE_SIZE = 30;
@@ -222,6 +228,16 @@ public class GrandCraftScreen extends Screen {
 	/** Where the identity block under the model is centred. */
 	private int identityCentreX;
 
+	/**
+	 * The skill-line structure, which is what the right panel holds once a class has
+	 * been chosen. Null while unclassed, when the browser has the panel instead.
+	 *
+	 * <p>Cleared in {@link #init} with the other layout-owned fields: {@code init} runs
+	 * again on a resize, and a panel laid out against the old bounds would keep drawing
+	 * at them.
+	 */
+	private SkillTreePanel skillTree;
+
 	/** The three live rows, kept so {@link #tick} can rewrite them in place. */
 	private StringWidget healthValue;
 	private StringWidget staminaValue;
@@ -268,6 +284,7 @@ public class GrandCraftScreen extends Screen {
 		this.levelValue = null;
 		this.essenceValue = null;
 		this.shownStats = null;
+		this.skillTree = null;
 
 		addCentred(this.title, this.width / 2, TITLE_TOP);
 
@@ -305,9 +322,88 @@ public class GrandCraftScreen extends Screen {
 		buildIdentity(playerClass);
 		buildPanel(panelLeft);
 
-		if (!this.classed) {
+		if (this.classed) {
+			buildSkillTree(playerClass);
+		} else {
 			buildClassBrowser();
 		}
+	}
+
+	/**
+	 * The right panel once a class has been chosen: that class's skill-line structure.
+	 *
+	 * <p>Two steps and in this order — the panel places its own hover targets while it
+	 * lays out, so there is nothing to register until it has. Everything about how it is
+	 * drawn lives in {@link SkillTreePanel}; this method only says where.
+	 */
+	private void buildSkillTree(PlayerClass playerClass) {
+		this.skillTree = new SkillTreePanel(this.font, SkillTree.of(playerClass));
+		this.skillTree.layout(this.rightPanelLeft, this.contentTop,
+				this.rightPanelRight, this.contentBottom);
+
+		// Laid out locked; this is what gives every node its real state and its tooltip.
+		refreshSkillTree();
+
+		this.skillTree.hoverTargets().forEach(this::addRenderableWidget);
+	}
+
+	/**
+	 * Restates the skill-lines for whoever is looking at them.
+	 *
+	 * <p>Called every tick and cheap by design — the panel returns immediately unless
+	 * the level, the milestone counters or the gates actually moved. That is what lets a
+	 * milestone climb while the sheet is open <em>without</em> a rebuild, which would
+	 * take the tooltip out from under the mouse.
+	 *
+	 * <p>Deliberately not part of {@link #panelIsStale}: everything that test watches
+	 * needs widgets adding or removing, and none of this does.
+	 */
+	private void refreshSkillTree() {
+		if (this.skillTree == null) {
+			return;
+		}
+
+		this.skillTree.refresh(progress().level(), skillProgress(),
+				ClientLevelSettings.current(), loadout());
+	}
+
+	/** This player's milestone counters, off the attachment the server syncs to them. */
+	private SkillProgress skillProgress() {
+		return this.minecraft.player.getAttachedOrElse(
+				GrandCraftAttachments.SKILL_PROGRESS, SkillProgress.NONE);
+	}
+
+	/** What they have equipped, from the same place and for the same reason. */
+	private SkillLoadout loadout() {
+		return this.minecraft.player.getAttachedOrElse(
+				GrandCraftAttachments.SKILL_LOADOUT, SkillLoadout.EMPTY);
+	}
+
+	/**
+	 * Clicking a skill node equips it, or takes it off if it is already on.
+	 *
+	 * <p>Handled here rather than on the hover widgets: those exist only to carry
+	 * tooltips, and a widget that also had behaviour would be a second place deciding
+	 * what a node does. The panel answers <em>which</em> node was hit; the server
+	 * decides everything else, including which slot it lands in — so this sends the
+	 * node and nothing more, and predicts nothing.
+	 *
+	 * <p>Tried before {@code super}, so a node always wins over whatever invisible
+	 * widget shares its pixels; anything that is not a node falls through to the buttons
+	 * as normal.
+	 */
+	@Override
+	public boolean mouseClicked(MouseButtonEvent event, boolean doubled) {
+		if (this.skillTree != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+			SkillNode node = this.skillTree.nodeAt(event.x(), event.y());
+
+			if (node != null && SkillTreePanel.isEquippable(node)) {
+				ClientPlayNetworking.send(new ToggleSkillPayload(node.path()));
+				return true;
+			}
+		}
+
+		return super.mouseClicked(event, doubled);
 	}
 
 	/**
@@ -891,8 +987,12 @@ public class GrandCraftScreen extends Screen {
 	 * <p>Only ever called for {@code PlayerClass.SELECTABLE}, which is what the browser
 	 * cycles. Peasant has no icon and needs none: it is what you are before choosing, not
 	 * something you can pick.
+	 *
+	 * <p>Package-private rather than private because {@link SkillTreePanel} draws the same
+	 * picture in the root of the skill-lines. One method, so the three places a class is
+	 * pictured cannot disagree about where the file lives.
 	 */
-	private static Identifier classIcon(PlayerClass playerClass) {
+	static Identifier classIcon(PlayerClass playerClass) {
 		return GrandCraft.id("textures/gui/class/" + playerClass.getSerializedName() + ".png");
 	}
 
@@ -941,6 +1041,7 @@ public class GrandCraftScreen extends Screen {
 
 		refreshPools();
 		refreshProgress();
+		refreshSkillTree();
 	}
 
 	@Override
@@ -953,14 +1054,10 @@ public class GrandCraftScreen extends Screen {
 			extractor.fill(this.rightPanelLeft, this.contentTop,
 					this.rightPanelRight, this.contentBottom, PANEL_COLOUR);
 
-			// The panel holds the class browser until a class is chosen; the placeholder
-			// is what it reverts to afterwards, naming what will eventually fill it.
+			// The panel holds the class browser until a class is chosen, and that
+			// character's skill-line structure ever after.
 			if (this.classed) {
-				extractor.centeredText(this.font,
-						Component.translatable("screen.grandcraft.sheet.coming_soon"),
-						this.rightPanelCentre,
-						(this.contentTop + this.contentBottom - LINE_HEIGHT) / 2,
-						COMING_SOON_COLOUR);
+				this.skillTree.extract(extractor, mouseX, mouseY);
 			} else {
 				// The whole texture into the icon's box: u and v are zero and the source
 				// size is given as the destination size, which is how vanilla asks for a

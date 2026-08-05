@@ -79,6 +79,16 @@ public final class CombatController {
 	private static final Identifier DEFENCE_ID = GrandCraft.id("combat_defence");
 	private static final Identifier GUARD_SPEED_ID = GrandCraft.id("guard_speed");
 
+	/**
+	 * The movement bonus of an empowerment window — Combat Master's, today.
+	 *
+	 * <p>Its own identifier rather than sharing {@link #GUARD_SPEED_ID}, so the two
+	 * compose instead of overwriting: a Warrior who blocks, gains the window and then
+	 * raises their guard again should be slowed by the guard <em>and</em> quickened by
+	 * the window, not whichever was applied last.
+	 */
+	private static final Identifier EMPOWER_SPEED_ID = GrandCraft.id("empower_speed");
+
 	private final StaggerTracker stagger = new StaggerTracker();
 
 	private final StaminaPool stamina = new StaminaPool();
@@ -251,8 +261,11 @@ public final class CombatController {
 			// applied forever.
 			clearStaggerModifiers(entity);
 			remove(entity, Attributes.MOVEMENT_SPEED, GUARD_SPEED_ID);
+			clearEmpowerment(entity);
 			return;
 		}
+
+		tickEmpowerment(entity);
 
 		syncPermanentModifiers(entity, profile);
 
@@ -664,6 +677,67 @@ public final class CombatController {
 	/** Whether the guard is up and absorbing. The raise and the tail are not. */
 	public boolean isGuarding() {
 		return this.state == CombatState.GUARDING;
+	}
+
+	// ------------------------------------------------------------- empowerment
+
+	/**
+	 * Ticks left of an empowerment window — the state behind the Warrior's Combat
+	 * Master, and whatever else grants one later.
+	 *
+	 * <p>Deliberately mechanical. This class holds the countdown and the movement
+	 * modifier and nothing else: <em>who</em> earns a window, what opens one, what
+	 * closes one and what an empowered blow is worth all live in
+	 * {@code skill/CombatMaster}. The controller never learns what a Warrior is, which
+	 * is what stops per-class rules leaking into the one object every actor in the game
+	 * owns.
+	 *
+	 * <p>Transient like the rest of this class. A window is at most a few seconds and
+	 * survives neither logout nor death, which is correct — it is earned in a fight and
+	 * spent in the same one.
+	 */
+	private int empowerTicks;
+
+	/**
+	 * Opens a window of the given length, replacing any already running.
+	 *
+	 * <p>Replacing rather than extending: blocking twice in quick succession should
+	 * give a full window from the second block, not a longer one. The alternative lets
+	 * a Warrior behind a shield bank an arbitrarily long buff.
+	 */
+	public void grantEmpowerment(LivingEntity entity, int ticks, double speedFraction) {
+		if (ticks <= 0) {
+			return;
+		}
+
+		this.empowerTicks = ticks;
+
+		if (speedFraction != 0.0) {
+			scale(entity, Attributes.MOVEMENT_SPEED, EMPOWER_SPEED_ID, speedFraction);
+		}
+	}
+
+	public boolean isEmpowered() {
+		return this.empowerTicks > 0;
+	}
+
+	/** Ends the window now, however much was left. Safe to call when none is open. */
+	public void clearEmpowerment(LivingEntity entity) {
+		this.empowerTicks = 0;
+		remove(entity, Attributes.MOVEMENT_SPEED, EMPOWER_SPEED_ID);
+	}
+
+	/**
+	 * Counts the window down and takes the movement bonus off when it runs out.
+	 *
+	 * <p>Nothing is sent to the client here. It was told the length when the window
+	 * opened, so it can see the end coming — only an <em>early</em> close needs a
+	 * message, and that is the one route that does not come through this method.
+	 */
+	private void tickEmpowerment(LivingEntity entity) {
+		if (this.empowerTicks > 0 && --this.empowerTicks <= 0) {
+			clearEmpowerment(entity);
+		}
 	}
 
 	/**
