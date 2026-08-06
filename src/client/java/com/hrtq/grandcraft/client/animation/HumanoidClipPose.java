@@ -94,6 +94,64 @@ public final class HumanoidClipPose {
 	 * @param blend   how strongly to apply it, 0 to 1; 1 is the pose as authored
 	 */
 	public static void apply(HumanoidModel<?> model, BedrockClip clip, float seconds, float blend) {
+		apply(model, clip, seconds, blend, false, false);
+	}
+
+	/**
+	 * As {@link #apply(HumanoidModel, BedrockClip, float, float)}, with a choice of how
+	 * the clip meets whatever vanilla already put on the parts.
+	 *
+	 * <h2>Relative or absolute</h2>
+	 *
+	 * Relative — the original behaviour, and still the dodge's — lays the clip
+	 * <em>over</em> vanilla's pose by composition. That is right when vanilla underneath
+	 * is the walk cycle: the authored motion rides on top and the actor keeps walking.
+	 * It is wrong when vanilla underneath is <em>its own version of the same motion</em>.
+	 * During an attack {@code setupAttackAnimation} has already thrown a full procedural
+	 * swing — up to 1.2 radians on the arm, plus a pitch-dependent drag that grows as the
+	 * actor looks down — and composing a 128° authored raise onto that never shows the
+	 * clip as drawn. It shows the product of two swings, which was reported as the arm
+	 * clipping through the body, worse the further down the player looked.
+	 *
+	 * <p>Absolute mode answers that by making the clip the <em>whole</em> rotation on the
+	 * parts it moves: body and both arms are set to the authored pose rather than
+	 * composed onto vanilla's, so vanilla's swing, its pitch drag and its body twist all
+	 * vanish under the clip instead of adding to it. {@code blend} then slerps between
+	 * vanilla's live pose and the authored one, so a release ramp hands the parts back to
+	 * whatever vanilla is currently doing — exactly the property the recovery blend
+	 * relies on.
+	 *
+	 * <p><strong>Rotations only, deliberately.</strong> Positions stay additive in both
+	 * modes: vanilla moves these parts for reasons a clip must not erase (crouch drops
+	 * the arms three pixels, and hard-set rest offsets would detach them), and the only
+	 * position {@code setupAttackAnimation} writes is the arm-pivot compensation for its
+	 * own body twist — bounded by that twist at about one pixel, noise next to the
+	 * rotational problem this mode exists for.
+	 *
+	 * <p><strong>Head and legs are relative in both modes.</strong> The head must keep
+	 * tracking the look and the legs must keep the walk cycle; what the attack clips key
+	 * on them are small accents that read correctly as overlays.
+	 *
+	 * <h2>The mirrored-arm experiment</h2>
+	 *
+	 * <p>{@code mirrorArms} negates the pitch and roll of what the clip asks of the two
+	 * arm bones (and the sideways/depth halves of their translations) — the conjugation
+	 * a rig built into the <em>opposite</em> x half of bedrock space needs. This rig is
+	 * such a rig: its right arm occupies larger x than its left, where a standard
+	 * bedrock humanoid puts the right arm at negative x, and its root carries a 180°
+	 * bind yaw that makes it <em>display</em> the right way round. The sword's held
+	 * pose rendered with the hand low, backward and outward where the intent (user,
+	 * 2026-08-05: the strike is a {@code \} stroke, "the player hand must go up") wants
+	 * it up, forward and across — which is exactly the mirror image this flag applies.
+	 *
+	 * <p><strong>Arms only, and experiment only.</strong> Taken as a theory of the rig
+	 * it would flip the spine too — but the dodge clips are user-confirmed correct
+	 * through the unmirrored path, so this is an empirical arm-scoped switch judged at
+	 * runtime, not a conversion rule. If runtime confirms it, the finding moves to
+	 * {@code BedrockClipLoader}'s notes and the animator conversation.
+	 */
+	public static void apply(HumanoidModel<?> model, BedrockClip clip, float seconds, float blend,
+			boolean absolute, boolean mirrorArms) {
 		if (clip.isEmpty() || blend <= 0.0F) {
 			return;
 		}
@@ -102,17 +160,21 @@ public final class HumanoidClipPose {
 
 		// The chest, with its turn taken out — that has gone to the whole actor, and
 		// leaving it here as well would turn the torso twice.
+		//
+		// A clip that never keys the chest carries nothing for the limbs to hang off, so
+		// they are posed against the identity instead — see carriesLimbs.
 		Quaternionf chest = swing(spine(clip, seconds, sample));
+		Quaternionf carried = carriesLimbs(clip) ? chest : new Quaternionf();
 
-		compose(model.body, chest, blend);
+		compose(model.body, chest, blend, absolute);
 
 		// Under the chest. The hat and the sleeve overlays are children of these parts
 		// in the mesh, so they follow without being named.
-		child(model.head, clip, HEAD, seconds, chest, 0.0F, 0.0F, blend, sample);
-		child(model.rightArm, clip, RIGHT_ARM, seconds, chest,
-				-ARM_PIVOT_X, ARM_PIVOT_Y, blend, sample);
-		child(model.leftArm, clip, LEFT_ARM, seconds, chest,
-				ARM_PIVOT_X, ARM_PIVOT_Y, blend, sample);
+		child(model.head, clip, HEAD, seconds, carried, 0.0F, 0.0F, blend, false, false, sample);
+		child(model.rightArm, clip, RIGHT_ARM, seconds, carried,
+				-ARM_PIVOT_X, ARM_PIVOT_Y, blend, absolute, mirrorArms, sample);
+		child(model.leftArm, clip, LEFT_ARM, seconds, carried,
+				ARM_PIVOT_X, ARM_PIVOT_Y, blend, absolute, mirrorArms, sample);
 
 		// Under the hips, which are not part of the model.
 		direct(model.rightLeg, clip, RIGHT_LEG, seconds, blend, sample);
@@ -142,7 +204,7 @@ public final class HumanoidClipPose {
 	 * impulse already produces.
 	 */
 	public static float wholeBodyYRot(BedrockClip clip, float seconds) {
-		if (clip.isEmpty()) {
+		if (clip.isEmpty() || !carriesLimbs(clip)) {
 			return 0.0F;
 		}
 
@@ -152,6 +214,30 @@ public final class HumanoidClipPose {
 		// quaternion rather than out of an Euler decomposition, for the same reason the
 		// split itself is not an Euler operation.
 		return 2.0F * (float) Math.atan2(twist.y, twist.w);
+	}
+
+	/**
+	 * Whether this clip's spine is something the head and arms hang off, or just a
+	 * chest cuboid moving on its own.
+	 *
+	 * <p><strong>It is decided by whether the clip keys {@code Upperbody}</strong>, and
+	 * the two answers are two different rigs' worth of meaning. On the animator's rig
+	 * {@code Upperbody} really is the head's and both arms' parent, so a clip that turns
+	 * it has turned them too and vanilla's siblings have to be paid the difference —
+	 * that is what {@link #child} exists for. {@code torso} is a <em>leaf</em> beside
+	 * them: turning it moves the chest cuboid and nothing else.
+	 *
+	 * <p>Every dodge clip keys both bones, so nothing about the dodge changes here.
+	 * Every clip in the attack delivery keys only {@code torso} — and paying the arms
+	 * for a rotation their real parent never made would swing them by an angle the
+	 * animator put on a decoration, and hand the whole player the greatsword's -17°
+	 * chest yaw as a body turn.
+	 *
+	 * <p>So: chest keyed, behave exactly as before; chest absent, the spine's rotation
+	 * lands on {@code body} alone and goes no further.
+	 */
+	private static boolean carriesLimbs(BedrockClip clip) {
+		return clip.has(CHEST);
 	}
 
 	/**
@@ -218,8 +304,19 @@ public final class HumanoidClipPose {
 	}
 
 	private static void child(ModelPart part, BedrockClip clip, String bone, float seconds,
-			Quaternionf chest, float pivotX, float pivotY, float blend, BonePose sample) {
+			Quaternionf chest, float pivotX, float pivotY, float blend, boolean absolute,
+			boolean mirror, BonePose sample) {
 		clip.sample(bone, seconds, sample);
+
+		if (mirror) {
+			// The other-x-half conjugation — see the apply javadoc. Pitch and roll
+			// reverse, the turn about vertical does not; translations mirror the same
+			// two axes.
+			sample.rotation.x = -sample.rotation.x;
+			sample.rotation.z = -sample.rotation.z;
+			sample.position.x = -sample.position.x;
+			sample.position.z = -sample.position.z;
+		}
 
 		// Where this part's pivot ends up once the chest has tipped, minus where it
 		// started — i.e. how far the shoulder travelled and the arm has to travel with
@@ -229,7 +326,7 @@ public final class HumanoidClipPose {
 		chest.transform(offset);
 		offset.sub(pivotX, pivotY, 0.0F).add(sample.position);
 
-		compose(part, new Quaternionf(chest).mul(quaternionOf(sample.rotation)), blend);
+		compose(part, new Quaternionf(chest).mul(quaternionOf(sample.rotation)), blend, absolute);
 		addPosition(part, offset, blend);
 	}
 
@@ -241,7 +338,7 @@ public final class HumanoidClipPose {
 			return;
 		}
 
-		compose(part, quaternionOf(sample.rotation), blend);
+		compose(part, quaternionOf(sample.rotation), blend, false);
 		addPosition(part, sample.position, blend);
 	}
 
@@ -257,7 +354,7 @@ public final class HumanoidClipPose {
 	}
 
 	/**
-	 * Lays a rotation over whatever the part already has.
+	 * Lays a rotation over whatever the part already has — or, absolutely, in its place.
 	 *
 	 * <p><strong>Composed, not added.</strong> The neighbouring procedural poses layer
 	 * themselves by summing Euler components onto the part's existing ones, and that is
@@ -269,22 +366,34 @@ public final class HumanoidClipPose {
 	 * quaternion, multiplying, and decomposing costs a few operations a frame and is
 	 * exact.
 	 *
-	 * <p>The blend is a slerp from the identity, which is the rotation-shaped way to
-	 * say "half of this pose" — scaling the Euler components would reintroduce the
-	 * approximation this method exists to avoid.
+	 * <p>The two modes disagree only about what the blend runs <em>from</em>. Relative
+	 * slerps the clip's contribution up from the identity and multiplies it onto
+	 * vanilla's pose — "this much of the clip, on top". Absolute slerps from vanilla's
+	 * pose <em>to</em> the clip's — "this far from vanilla, towards the pose as
+	 * authored" — so at full blend vanilla contributes nothing at all, which is the
+	 * point of the mode, and at zero it is untouched, which is what lets a release ramp
+	 * hand the part back. Scaling Euler components would reintroduce the approximation
+	 * this method exists to avoid, in either mode.
 	 */
-	private static void compose(ModelPart part, Quaternionf rotation, float blend) {
-		Quaternionf pose = blend >= 1.0F
-				? rotation
-				: new Quaternionf().slerp(rotation, blend);
+	private static void compose(ModelPart part, Quaternionf rotation, float blend,
+			boolean absolute) {
+		Quaternionf current = new Quaternionf().rotationZYX(part.zRot, part.yRot, part.xRot);
 
 		// Into a fresh quaternion rather than in place: the chest is composed onto the
 		// body and then onto all three of its children, so mutating it here would leave
 		// the arms wearing the torso's pose twice over.
-		Vector3f euler = pose
-				.mul(new Quaternionf().rotationZYX(part.zRot, part.yRot, part.xRot),
-						new Quaternionf())
-				.getEulerAnglesZYX(new Vector3f());
+		Quaternionf pose;
+
+		if (absolute) {
+			pose = blend >= 1.0F
+					? new Quaternionf(rotation)
+					: new Quaternionf(current).slerp(rotation, blend);
+		} else {
+			pose = (blend >= 1.0F ? rotation : new Quaternionf().slerp(rotation, blend))
+					.mul(current, new Quaternionf());
+		}
+
+		Vector3f euler = pose.getEulerAnglesZYX(new Vector3f());
 
 		part.xRot = euler.x;
 		part.yRot = euler.y;

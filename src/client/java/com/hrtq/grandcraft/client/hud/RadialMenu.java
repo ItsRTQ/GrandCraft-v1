@@ -23,12 +23,16 @@ import net.minecraft.world.entity.player.Inventory;
  * turn an angle into a slot, because two places doing that arithmetic is two places
  * that can disagree about which item the player just picked.
  *
- * <p>The array already names all eleven slots, but {@link #slotForWedge} refuses any
- * beyond {@link Inventory#getSelectionSize()}. Vanilla's is nine, so the last two
- * wedges draw locked until that limit is raised; they then unlock with no change
- * here. That is deliberate — it keeps "what the wheel offers" and "what the player is
- * allowed to hold" as one answer rather than two constants to keep in step, and means
- * a wedge can never ask {@code setSelectedSlot} for a slot it throws on.
+ * <p>The array names all eleven slots, but {@link #slotForWedge} refuses any beyond
+ * {@link Inventory#getSelectionSize()}. That is deliberate — it keeps "what the wheel
+ * offers" and "what the player is allowed to hold" as one answer rather than two
+ * constants to keep in step, and means a wedge can never ask {@code setSelectedSlot}
+ * for a slot it throws on.
+ *
+ * <p>Vanilla's answer is nine, which left the last two wedges drawing locked for as
+ * long as the wheel existed. {@code InventorySelectionMixin} now raises it to eleven,
+ * and they unlocked with <strong>no change here</strong> — which is the whole point of
+ * asking rather than counting.
  *
  * <h2>Aimed, not pointed at</h2>
  *

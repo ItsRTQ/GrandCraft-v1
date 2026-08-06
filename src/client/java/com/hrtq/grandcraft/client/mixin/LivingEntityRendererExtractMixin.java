@@ -4,6 +4,7 @@ import com.hrtq.grandcraft.client.ClientCombatPhases;
 import com.hrtq.grandcraft.client.ClientGameSettings;
 import com.hrtq.grandcraft.client.render.CombatPoseState;
 import com.hrtq.grandcraft.combat.CombatState;
+import com.hrtq.grandcraft.combat.WeaponCategory;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
 import net.minecraft.util.Util;
@@ -44,7 +45,7 @@ public abstract class LivingEntityRendererExtractMixin {
 		}
 
 		if (!ClientGameSettings.current().combatAnimations()) {
-			poseState.grandcraft$setPhase(CombatState.NEUTRAL, 0.0F, null);
+			poseState.grandcraft$setPhase(CombatState.NEUTRAL, 0.0F, null, null);
 			return;
 		}
 
@@ -54,6 +55,10 @@ public abstract class LivingEntityRendererExtractMixin {
 		poseState.grandcraft$setPhase(
 				ClientCombatPhases.stateOf(id, now),
 				ClientCombatPhases.progressOf(id, now),
-				ClientCombatPhases.travelYaw(id));
+				ClientCombatPhases.travelYaw(id),
+				// A plain item-tag lookup, which is safe from the render thread — tags are
+				// synced and WeaponCategory.of touches nothing else. Deliberately not
+				// CombatProfiles, which rebuilds from config and must not be asked here.
+				WeaponCategory.of(entity.getMainHandItem()));
 	}
 }

@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.client.render;
 
 import com.hrtq.grandcraft.combat.CombatState;
+import com.hrtq.grandcraft.combat.WeaponCategory;
 
 /**
  * The combat phase an entity was in when its render state was extracted.
@@ -27,5 +28,16 @@ public interface CombatPoseState {
 	 */
 	Float grandcraft$travelYaw();
 
-	void grandcraft$setPhase(CombatState phase, float progress, Float travelYaw);
+	/**
+	 * What the actor was holding, which is what decides <em>which</em> attack clip plays.
+	 *
+	 * <p>Carried on the state rather than read at pose time for the reason every other
+	 * field here is: {@code setupAnim} is handed the state and cannot reach the entity.
+	 * Null for anything that is not a combatant, which reads as "no authored swing" and
+	 * falls back to the procedural posture.
+	 */
+	WeaponCategory grandcraft$weapon();
+
+	void grandcraft$setPhase(CombatState phase, float progress, Float travelYaw,
+			WeaponCategory weapon);
 }

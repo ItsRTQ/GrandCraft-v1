@@ -2,6 +2,7 @@ package com.hrtq.grandcraft.client;
 
 import com.hrtq.grandcraft.client.animation.GrandCraftAnimations;
 import com.hrtq.grandcraft.client.hud.AbilityBarElement;
+import com.hrtq.grandcraft.client.hud.ArmourBarElement;
 import com.hrtq.grandcraft.client.hud.HealthBarElement;
 import com.hrtq.grandcraft.client.hud.HudBars;
 import com.hrtq.grandcraft.client.hud.ManaBarElement;
@@ -114,6 +115,15 @@ public class GrandCraftClient implements ClientModInitializer {
 				HealthBarElement.ID, StaminaBarElement.ID, new StaminaBarElement());
 		HudElementRegistry.attachElementAfter(
 				StaminaBarElement.ID, ManaBarElement.ID, new ManaBarElement());
+
+		// Armour joins the bottom of the column too, but by replacement rather than by
+		// translation: vanilla anchors it above the HEARTS, so its position moves with max
+		// health — which Constitution and bought attribute points both change. See
+		// ArmourBarElement. Replacing rather than removing-and-attaching keeps it on
+		// vanilla's own layer, which is inside extractPlayerHealth, so it inherits exactly
+		// the same "show status bars?" gate it has always had.
+		HudElementRegistry.replaceElement(VanillaHudElements.ARMOR_BAR,
+				original -> new ArmourBarElement());
 
 		// Removing the hotbar left a strip of nothing along the bottom with the
 		// experience bar floating above it. Push the experience bar and its level number

@@ -28,6 +28,15 @@ public final class GrandCraftAnimations {
 	/** The player's four directional dodges, as exported from Blockbench. */
 	public static final Identifier PLAYER_DODGE = GrandCraft.id("animations/player_dodge.json");
 
+	/**
+	 * The player's four attacks, one per weapon category, as exported from Blockbench.
+	 *
+	 * <p>Named {@code wind_up_*} inside the file and kept that way, though each is a
+	 * whole swing rather than a wind-up — see {@code AttackAnimation}, which is where
+	 * that distinction is turned into a timeline.
+	 */
+	public static final Identifier PLAYER_ATTACK = GrandCraft.id("animations/player_attack.json");
+
 	private static Map<String, BedrockClip> clips = Map.of();
 
 	private GrandCraftAnimations() {
@@ -68,6 +77,7 @@ public final class GrandCraftAnimations {
 		Map<String, BedrockClip> loaded = new HashMap<>();
 
 		read(manager, PLAYER_DODGE, loaded);
+		read(manager, PLAYER_ATTACK, loaded);
 
 		clips = Map.copyOf(loaded);
 	}

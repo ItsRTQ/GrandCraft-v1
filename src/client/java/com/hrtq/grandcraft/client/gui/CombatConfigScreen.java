@@ -210,16 +210,22 @@ public class CombatConfigScreen extends Screen {
 			row++;
 		}
 
-		if (actor.usesMeleeGoal()) {
+		if (actor.usesMeleeGoal() && !actor.has(CombatVerb.WEAPONS)) {
 			this.startup = ticks(seed.startupTicks(), ActorSettings.MAX_PHASE_TICKS);
 			row = addValue(grid, row, "startup", false, this.startup);
 
 			this.active = ticks(seed.activeTicks(), ActorSettings.MAX_PHASE_TICKS);
 			row = addValue(grid, row, "active", false, this.active);
 		} else {
-			// Nothing to delay: this actor's damage lands on vanilla timing, so it has
-			// neither a wind-up nor a window of ours. Cleared rather than left stale,
-			// because readFields() uses null to mean "keep the stored value".
+			// Either nothing to delay — an actor whose damage lands on vanilla timing has
+			// neither a wind-up nor a window of ours — or superseded, exactly as endlag is
+			// below: the player got PHASED_MELEE in 2026-08-05, and its three phase
+			// figures all come from the category of whatever it is holding. Two screens
+			// showing the same number is how a tuning change gets reported as a broken
+			// mechanic.
+			//
+			// Cleared rather than left stale, because readFields() uses null to mean
+			// "keep the stored value".
 			this.startup = null;
 			this.active = null;
 		}

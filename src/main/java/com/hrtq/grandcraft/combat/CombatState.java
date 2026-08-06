@@ -49,6 +49,11 @@ public enum CombatState {
 
 	private static final CombatState[] BY_ID = values();
 
+	/** Whether this is part of an attack, in any of its three phases. */
+	public boolean isAttack() {
+		return this == ATTACK_STARTUP || this == ATTACK_ACTIVE || this == ATTACK_RECOVERY;
+	}
+
 	/** Whether this is part of a dodge, in either of its two halves. */
 	public boolean isDodge() {
 		return this == DODGE_ACTIVE || this == DODGE_RECOVERY;

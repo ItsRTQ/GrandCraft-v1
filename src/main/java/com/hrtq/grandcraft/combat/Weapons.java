@@ -23,19 +23,14 @@ public final class Weapons {
 		WeaponCategory category = WeaponCategory.of(stack);
 		CategorySettings values = WeaponTuning.current().forCategory(category);
 
-		// Startup is forced to zero for exactly the reason CombatProfiles does the same
-		// to any actor without PHASED_MELEE: the player has no attack pose yet, and a
-		// wind-up nobody can see is indistinguishable from lag. The configured value is
-		// carried in CategorySettings and persisted, so the slice that adds player
-		// attack phases is three edits — delete the literal below, point the player's
-		// attack path at beginAttack instead of enterRecoveryOnly, and give PLAYER the
-		// PHASED_MELEE verb. Nothing else in the state machine has to learn anything.
-		//
-		// The hit window is passed through rather than zeroed because AttackProfile
-		// refuses anything under one tick, and it costs nothing while startup is zero:
-		// the player jumps straight to recovery, so no active window ever opens.
+		// Startup used to be forced to zero here, because the player had no attack pose
+		// and a wind-up nobody can see is indistinguishable from lag. The pose arrived on
+		// 2026-08-05 and the literal went with it — these are the animator's telegraphs
+		// now, and every one of these three figures has been configured and persisted in
+		// CategorySettings since long before anything read them.
 		return new WeaponProfile(category,
-				new AttackProfile(0, values.activeTicks(), values.recoveryTicks()),
+				new AttackProfile(values.startupTicks(), values.activeTicks(),
+						values.recoveryTicks()),
 				values.staminaCost());
 	}
 }

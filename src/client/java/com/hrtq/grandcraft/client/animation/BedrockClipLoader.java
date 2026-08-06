@@ -184,15 +184,56 @@ public final class BedrockClipLoader {
 
 		float[] times = new float[keys.size()];
 		float[] values = new float[keys.size() * 3];
+		BedrockClip.Interpolation[] curves = new BedrockClip.Interpolation[keys.size()];
 		int index = 0;
 
 		for (Map.Entry<Float, JsonElement> entry : keys.entrySet()) {
 			times[index] = entry.getKey();
 			vector(entry.getValue(), axis, values, index * 3);
+			curves[index] = interpolation(entry.getValue());
 			index++;
 		}
 
-		return new BedrockClip.Channel(times, values);
+		return new BedrockClip.Channel(times, values, curves);
+	}
+
+	/**
+	 * How the clip arrives <em>at</em> this keyframe, which is what Blockbench's
+	 * {@code easing} and {@code lerp_mode} both describe — they shape the segment that
+	 * ends here, not the one that leaves.
+	 *
+	 * <p>Anything unrecognised reads as {@link BedrockClip.Interpolation#LINEAR}, which
+	 * is what every channel did before this existed. A curve nobody implemented playing
+	 * as a straight line is a clip that looks slightly flat; one that throws is a render
+	 * thread that dies.
+	 *
+	 * <p>Only the three functions the attack delivery actually uses are named. There are
+	 * a few dozen in Blockbench's list and enumerating them all speculatively would be
+	 * writing code against clips that do not exist — <strong>add the case when a clip
+	 * turns up using it</strong>, which is exactly how this method came to exist at all.
+	 */
+	private static BedrockClip.Interpolation interpolation(JsonElement element) {
+		if (!element.isJsonObject()) {
+			return BedrockClip.Interpolation.LINEAR;
+		}
+
+		JsonObject json = element.getAsJsonObject();
+
+		if (json.has("lerp_mode")
+				&& "catmullrom".equals(json.get("lerp_mode").getAsString())) {
+			return BedrockClip.Interpolation.CATMULLROM;
+		}
+
+		if (!json.has("easing")) {
+			return BedrockClip.Interpolation.LINEAR;
+		}
+
+		return switch (json.get("easing").getAsString()) {
+			case "easeInSine" -> BedrockClip.Interpolation.EASE_IN_SINE;
+			case "easeInQuad" -> BedrockClip.Interpolation.EASE_IN_QUAD;
+			case "easeInCubic" -> BedrockClip.Interpolation.EASE_IN_CUBIC;
+			default -> BedrockClip.Interpolation.LINEAR;
+		};
 	}
 
 	private static BedrockClip.Channel constant(JsonArray array, Axis axis) {
@@ -200,7 +241,8 @@ public final class BedrockClipLoader {
 
 		components(array, axis, values, 0);
 
-		return new BedrockClip.Channel(new float[] {0.0F}, values);
+		return new BedrockClip.Channel(new float[] {0.0F}, values,
+				new BedrockClip.Interpolation[] {BedrockClip.Interpolation.LINEAR});
 	}
 
 	/**

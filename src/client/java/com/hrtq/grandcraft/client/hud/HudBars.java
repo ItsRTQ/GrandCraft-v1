@@ -48,9 +48,15 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
  * <p>It conveniently shares this column's measurements already: a vanilla status row is
  * 81x9, which is exactly what the artist authored the other three bars at.
  *
- * <p><strong>Armour and air are left where vanilla puts them.</strong> Neither is a
- * GrandCraft resource, both are conditional, and moving them would mean owning two more
- * layouts for rows that are usually absent.
+ * <h2>Armour is in it too, but redrawn rather than translated</h2>
+ * Under the hunger bar, and last (user, 2026-08-05). Unlike hunger it is not vanilla's
+ * element moved — {@link ArmourBarElement} explains why in full, but the short version
+ * is that vanilla anchors armour above the <em>hearts</em>, so its position moves with
+ * max health, which this mod changes constantly.
+ *
+ * <p><strong>Air is still left where vanilla puts it.</strong> It is not a GrandCraft
+ * resource, it is absent almost always, and it is the one row vanilla draws on the right
+ * that nothing here has a reason to claim.
  */
 public final class HudBars {
 	/**
@@ -58,8 +64,9 @@ public final class HudBars {
 	 * 9px icon height.
 	 *
 	 * <p>Kept after the move off vanilla's anchor because it is the size every frame is
-	 * authored at, for all three bars, by two separate deliveries. It is the artist's
-	 * canvas now rather than vanilla's row, and changing it means reworking 46 PNGs.
+	 * authored at, for all three bars, across four separate deliveries. It is the
+	 * artist's canvas now rather than vanilla's row, and changing it means reworking
+	 * <strong>83 PNGs</strong> — 26 health, 27 stamina and its 3 exhausted, 27 mana.
 	 */
 	public static final int BAR_WIDTH = 81;
 	public static final int BAR_HEIGHT = 9;
@@ -119,6 +126,19 @@ public final class HudBars {
 	 */
 	public static int foodRow() {
 		return manaRow() + (ClientMana.hasData() ? 1 : 0);
+	}
+
+	/**
+	 * Armour last, under hunger (user, 2026-08-05).
+	 *
+	 * <p>The one row that needs no condition. Every row above it asks whether the bar
+	 * before it was drawn, because a gap in the middle of a column reads as a broken
+	 * element; nothing is below this one, so an absent armour row is just a shorter
+	 * column. That is also why it is last rather than, say, beside health: it is the row
+	 * the player is most often without.
+	 */
+	public static int armourRow() {
+		return foodRow() + 1;
 	}
 
 	// ------------------------------------------------- moving vanilla's hunger bar

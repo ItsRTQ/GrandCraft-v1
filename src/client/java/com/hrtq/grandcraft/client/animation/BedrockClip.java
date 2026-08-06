@@ -15,11 +15,21 @@ import org.joml.Vector3f;
  * <p>Everything here is already in vanilla's conventions. The Blockbench axis
  * conversion is done once, at load; see {@link BedrockClipLoader}.
  *
- * <h2>Interpolation is linear, deliberately</h2>
- * Blockbench can export {@code lerp_mode: catmullrom}, and nothing here honours it —
- * a smooth channel would be sampled as straight segments between its keys. None of
- * the dodge clips use it. If a future clip does, this is the file that has to grow a
- * spline rather than the file that silently looks wrong, so it is worth knowing.
+ * <h2>Interpolation follows the keyframe it arrives at</h2>
+ * This file used to interpolate everything linearly, with a note saying that the day a
+ * clip arrived using {@code easing} or {@code lerp_mode}, this was the file that had to
+ * grow a spline. The attack delivery (2026-08-05) is that clip — 58 eased keyframes and
+ * six {@code catmullrom} ones — so it grew one.
+ *
+ * <p><strong>A keyframe's curve shapes the segment that <em>ends</em> at it</strong>,
+ * not the one that leaves it. That is not a guess: across all four attack clips the
+ * keyframe at {@code t=0} is the only one that never carries an {@code easing}, which is
+ * exactly the keyframe with no incoming segment. Under the opposite reading the *last*
+ * key would be the bare one instead. So sampling between two keys uses the later key's
+ * {@link Interpolation}.
+ *
+ * <p>The dodge clips carry neither field, so every one of their channels resolves to
+ * {@link Interpolation#LINEAR} and they play exactly as they did before.
  */
 public final class BedrockClip {
 	/** What a missing clip samples to: nothing, everywhere. */
@@ -38,7 +48,43 @@ public final class BedrockClip {
 	}
 
 	/**
-	 * One channel of keyframes: times in seconds, three floats of value per time.
+	 * How a segment gets from one keyframe to the next.
+	 *
+	 * <p>Only what the shipped clips actually use. Blockbench offers a few dozen easing
+	 * functions; naming them all here would be writing code against clips that do not
+	 * exist, and an unknown one already falls back to {@link #LINEAR} in the loader.
+	 */
+	enum Interpolation {
+		LINEAR,
+		EASE_IN_SINE,
+		EASE_IN_QUAD,
+		EASE_IN_CUBIC,
+
+		/**
+		 * A smooth curve through the surrounding keys rather than a straight line
+		 * between two of them. Unlike the easings this reads the neighbouring
+		 * keyframes, so it is applied by the channel rather than by reshaping {@code t}.
+		 */
+		CATMULLROM;
+
+		/**
+		 * Reshapes progress through a segment. An easing bends time and leaves the
+		 * endpoints alone — 0 stays 0 and 1 stays 1 — which is what lets it be applied
+		 * before an ordinary lerp.
+		 */
+		float shape(float t) {
+			return switch (this) {
+				case EASE_IN_SINE -> 1.0F - (float) Math.cos(t * Math.PI / 2.0);
+				case EASE_IN_QUAD -> t * t;
+				case EASE_IN_CUBIC -> t * t * t;
+				default -> t;
+			};
+		}
+	}
+
+	/**
+	 * One channel of keyframes: times in seconds, three floats of value per time, and
+	 * how the segment ending at each one is shaped.
 	 *
 	 * <p>Stored as flat arrays rather than a list of objects because this is sampled
 	 * once per bone per channel per frame, and the whole point of doing the axis
@@ -47,10 +93,12 @@ public final class BedrockClip {
 	static final class Channel {
 		private final float[] times;
 		private final float[] values;
+		private final Interpolation[] curves;
 
-		Channel(float[] times, float[] values) {
+		Channel(float[] times, float[] values, Interpolation[] curves) {
 			this.times = times;
 			this.values = values;
+			this.curves = curves;
 		}
 
 		/**
@@ -86,13 +134,48 @@ public final class BedrockClip {
 			float span = this.times[next] - this.times[previous];
 			float t = span <= 0.0F ? 0.0F : (seconds - this.times[previous]) / span;
 
+			// The later key's curve, because a curve shapes the segment arriving at its
+			// own keyframe — see the class notes for the evidence.
+			Interpolation curve = this.curves[next];
+
 			int a = previous * 3;
 			int b = next * 3;
 
+			if (curve == Interpolation.CATMULLROM) {
+				// Needs the keys either side of the segment as well, so it cannot go
+				// through shape(). Clamped at the ends: the first and last keys stand in
+				// for the neighbours they do not have, which makes the spline flatten
+				// into the clip's boundaries rather than overshoot out of them.
+				int before = Math.max(previous - 1, 0) * 3;
+				int after = Math.min(next + 1, count - 1) * 3;
+
+				out.set(
+						catmullRom(this.values[before], this.values[a],
+								this.values[b], this.values[after], t),
+						catmullRom(this.values[before + 1], this.values[a + 1],
+								this.values[b + 1], this.values[after + 1], t),
+						catmullRom(this.values[before + 2], this.values[a + 2],
+								this.values[b + 2], this.values[after + 2], t));
+				return;
+			}
+
+			float shaped = curve.shape(t);
+
 			out.set(
-					lerp(this.values[a], this.values[b], t),
-					lerp(this.values[a + 1], this.values[b + 1], t),
-					lerp(this.values[a + 2], this.values[b + 2], t));
+					lerp(this.values[a], this.values[b], shaped),
+					lerp(this.values[a + 1], this.values[b + 1], shaped),
+					lerp(this.values[a + 2], this.values[b + 2], shaped));
+		}
+
+		/** The standard uniform Catmull-Rom basis, on the segment {@code p1} to {@code p2}. */
+		private static float catmullRom(float p0, float p1, float p2, float p3, float t) {
+			float t2 = t * t;
+			float t3 = t2 * t;
+
+			return 0.5F * ((2.0F * p1)
+					+ (p2 - p0) * t
+					+ (2.0F * p0 - 5.0F * p1 + 4.0F * p2 - p3) * t2
+					+ (3.0F * p1 - p0 - 3.0F * p2 + p3) * t3);
 		}
 
 		private void read(int index, Vector3f out) {

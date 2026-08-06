@@ -143,8 +143,11 @@ public final class AbilityBarElement implements HudElement {
 	 *
 	 * <p>Coded rather than blitted, and temporarily: there is no artwork for a buff
 	 * indicator, and a buff nobody can see is indistinguishable from a broken one
-	 * ({@code tuning.md} lesson 4). The same call {@code ManaBarElement} documents for
-	 * itself — when art arrives this becomes one blit and the geometry survives.
+	 * ({@code tuning.md} lesson 4). The same call the mana bar was shipped on, and it
+	 * came out the same way — mana was three fills against {@link HudBars} until the
+	 * frames arrived, and when they did the swap was one blit with the geometry
+	 * untouched. That is the point of drawing against {@code HudBars} rather than
+	 * against numbers of one's own.
 	 */
 	private static final int BADGE_BACKGROUND = 0xB3120C04;
 	private static final int BADGE_BORDER = 0xB3FFC24A;

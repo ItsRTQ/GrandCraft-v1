@@ -140,6 +140,20 @@ public final class GrandCraftCombat {
 				return InteractionResult.PASS;
 			}
 
+			// THE BLOW LANDING IS ITSELF AN ATTACK EVENT. Fabric fires this callback from
+			// the HEAD of Player.attack, and PlayerAttack lands its hit by calling exactly
+			// that method — so without this the swing re-enters here, canStartAttack
+			// refuses it for being mid-swing, and the attack is cancelled. The symptom
+			// would not be a crash or a loop: it would be a wind-up that never hits
+			// anything, ever.
+			//
+			// PASS rather than a bail-out, because vanilla's Player.attack is precisely
+			// what should run now. Read only on the server thread — the client returned
+			// above — which is also the only thread that writes it.
+			if (PlayerAttack.isLandingBlow(player)) {
+				return InteractionResult.PASS;
+			}
+
 			CombatProfile profile = CombatProfiles.forEntity(player);
 
 			if (profile == null) {
@@ -161,14 +175,30 @@ public final class GrandCraftCombat {
 				return InteractionResult.FAIL;
 			}
 
-			// Phase 1 does not delay player damage — the client already played the
-			// swing and crit visuals at click time and there is no animation layer
-			// to hide a server-side startup behind. So vanilla deals the damage on
-			// its own timing and the controller only books the recovery that
-			// follows, which is what makes the lockout above meaningful.
-			controller.enterRecoveryOnly(player, profile);
+			// The click books a wind-up and decides nothing else — not the target, not
+			// the reach, not the damage. PlayerAttack looks for what is in front of the
+			// player when the wind-up ends, which is also the frame the animation shows
+			// the weapon arriving. The target this callback was handed is deliberately
+			// ignored: banking it made clicking a mob behave differently from clicking
+			// air, and the two should be one swing.
+			//
+			// This used to be enterRecoveryOnly, because the player had no attack pose
+			// and the client played swing and crit visuals at click time regardless. Both
+			// are answered as of 2026-08-05: there are four authored clips, and
+			// MultiPlayerGameMode's local hit prediction is suppressed client side.
+			if (!controller.beginAttack(player, profile)) {
+				// Refused between canStartAttack and here — the two agree today, so this
+				// is belt and braces rather than a path anything reaches. Failing closed
+				// costs a swing; failing open would deal damage with no phase behind it.
+				return InteractionResult.FAIL;
+			}
+
 			notifyLockout(player, controller);
-			return InteractionResult.PASS;
+
+			// FAIL, not PASS: any non-PASS cancels vanilla's Player.attack, which is
+			// exactly what has to not happen now. The damage is this swing's to deal,
+			// several ticks from now, through the same Player.attack this is cancelling.
+			return InteractionResult.FAIL;
 		});
 
 		// Phase packets are sent on transitions, so a viewer who was not yet tracking
@@ -400,8 +430,22 @@ public final class GrandCraftCombat {
 	}
 
 	/**
-	 * A swing that hit nothing still commits the player, so a miss is punished the
-	 * same way a hit is.
+	 * A swing at nothing is a swing. It winds up, telegraphs and costs exactly what one
+	 * thrown at a mob does.
+	 *
+	 * <p><strong>This is what makes the attack animation play whenever the player
+	 * attacks</strong> rather than only when they happened to click on something. The
+	 * client can tell the three outcomes apart and this is the one that says "swung at
+	 * air" — {@code MinecraftAttackMissMixin} explains why the distinction has to be made
+	 * there and cannot be made here.
+	 *
+	 * <p>It books the same {@code beginAttack} the entity path books, so the two are one
+	 * swing with one shape. Whether it connects is then nobody's business until the
+	 * wind-up ends: {@code PlayerAttack} looks for a target at the active frame, and a mob
+	 * that walks into a swing thrown at empty air is hit by it.
+	 *
+	 * <p>It used to book {@code enterRecoveryOnly} — endlag and no wind-up — because the
+	 * player had no wind-up to give it.
 	 *
 	 * <p>Silently ignored when the player is not free to attack: they could not have
 	 * thrown that swing, so it must not extend a lockout they are already serving.
@@ -425,7 +469,10 @@ public final class GrandCraftCombat {
 				return;
 			}
 
-			controller.enterRecoveryOnly(player, profile);
+			if (!controller.beginAttack(player, profile)) {
+				return;
+			}
+
 			notifyLockout(player, controller);
 		});
 	}

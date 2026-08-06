@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.mixin;
 
 import com.hrtq.grandcraft.combat.CombatController;
+import com.hrtq.grandcraft.combat.PlayerAttack;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -31,6 +32,11 @@ public class LivingEntityMixin {
 
 		if (controller != null) {
 			controller.tick(self);
+
+			// After the tick, never inside it: the controller has to have already
+			// entered ATTACK_ACTIVE this tick for there to be a frame to land on.
+			// Returns immediately for anything that is not a player mid-swing.
+			PlayerAttack.tick(self, controller);
 		}
 	}
 }

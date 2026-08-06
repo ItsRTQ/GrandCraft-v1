@@ -115,6 +115,8 @@ public class WeaponConfigScreen extends Screen {
 	 */
 	private WeaponCategory fieldsFor;
 
+	private TunableField startup;
+	private TunableField hitWindow;
 	private TunableField endlag;
 	private TunableField staminaCost;
 
@@ -242,13 +244,24 @@ public class WeaponConfigScreen extends Screen {
 	/**
 	 * Every value for the open category, in one grid.
 	 *
-	 * <p>Seven rows for a category that only swings, thirteen for the one that casts.
+	 * <p>Nine rows for a category that only swings, fifteen for the one that casts.
 	 * Ordered the way someone tuning it would work: what a swing commits you to, what
-	 * it costs, who it rewards, then the cast.
+	 * it costs, who it rewards, then the cast — and within the first of those, the order
+	 * the swing itself happens in.
 	 */
 	private GridLayout buildGrid(WeaponCategory category, CategorySettings seed) {
 		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
 		int row = 0;
+
+		// Startup and the hit window were stored but hidden for as long as nothing read
+		// them — a slider that does nothing is worse than no slider. They drive the
+		// player's swing since 2026-08-05, so they are shown, and they are shown first
+		// because they are the order the swing happens in.
+		this.startup = ticks(seed.startupTicks(), CategorySettings.MAX_PHASE_TICKS);
+		row = addValue(grid, row, "startup", this.startup);
+
+		this.hitWindow = ticks(seed.activeTicks(), CategorySettings.MAX_PHASE_TICKS);
+		row = addValue(grid, row, "hit_window", this.hitWindow);
 
 		this.endlag = ticks(seed.recoveryTicks(), CategorySettings.MAX_PHASE_TICKS);
 		row = addValue(grid, row, "endlag", this.endlag);
@@ -357,6 +370,8 @@ public class WeaponConfigScreen extends Screen {
 		this.weightConstitution = null;
 		this.weightArcane = null;
 		this.weightTotal = null;
+		this.startup = null;
+		this.hitWindow = null;
 		this.endlag = null;
 		this.staminaCost = null;
 		this.manaCost = null;
@@ -518,16 +533,15 @@ public class WeaponConfigScreen extends Screen {
 	/**
 	 * The visible tab's values as the fields currently stand.
 	 *
-	 * <p>Startup and the hit window are always carried through from what is stored,
-	 * because this screen never shows them — as are the cast values for any category
-	 * that does not cast.
+	 * <p>The cast values for a category that does not cast are carried through from what
+	 * is stored, because the screen does not show them for that category.
 	 */
 	private CategorySettings readFields() {
 		CategorySettings stored = this.working.get(this.fieldsFor);
 
 		return new CategorySettings(
-				stored.startupTicks(),
-				stored.activeTicks(),
+				this.startup.intValue(),
+				this.hitWindow.intValue(),
 				this.endlag.intValue(),
 				this.staminaCost.intValue(),
 				new StatWeights(

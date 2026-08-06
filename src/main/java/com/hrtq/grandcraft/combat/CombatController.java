@@ -417,22 +417,13 @@ public final class CombatController {
 		this.activeHitConsumed = true;
 	}
 
-	/**
-	 * Puts the actor straight into recovery without a startup or active phase.
-	 * Used for the player, whose damage still lands on vanilla timing in Phase 1.
-	 *
-	 * <p>Charges the attack's stamina whether the swing connected or missed. Callers
-	 * are expected to have cleared {@link #canStartAttack} first, so the cost is
-	 * spent rather than merely attempted.
-	 */
-	public void enterRecoveryOnly(LivingEntity entity, CombatProfile profile) {
-		WeaponProfile weapon = weaponProfile(entity, profile);
 
-		spendAttackCost(profile, weapon);
-		this.attack = weapon.attack();
-		this.activeHitConsumed = true;
-		enter(entity, CombatState.ATTACK_RECOVERY, this.attack.recoveryTicks());
-	}
+	// enterRecoveryOnly lived here until 2026-08-05. It skipped straight to endlag with no
+	// startup and no active window, because the player had no attack pose and a wind-up
+	// nobody can see is indistinguishable from lag. Both player paths — the entity click
+	// and the swing at air — go through beginAttack now, so there is nothing left that
+	// wants an attack with no front half. Deleted rather than kept for a caller that may
+	// never come back.
 
 	/**
 	 * Whether a dodge may start right now.

@@ -33,16 +33,17 @@ import net.minecraft.network.codec.StreamCodec;
  * a weapon. Keeping them apart is what stops two config screens becoming two places
  * to look for the same kind of number.
  *
- * <h2>Startup and the hit window do nothing yet</h2>
- * {@link #startupTicks} and {@link #activeTicks} are stored, persisted and clamped,
- * but <strong>nothing reads them today</strong>. The player has no attack wind-up:
- * its swing goes straight to endlag through
- * {@code CombatController.enterRecoveryOnly}, because a wind-up nobody can see is
- * indistinguishable from lag and the animation is not ready. They are held here so
- * the slice that adds player attack phases is a substitution rather than a schema
- * change, and they are hidden from the config screen for the same reason
- * {@code CombatConfigScreen} hides startup for the player — a slider that does
- * nothing is worse than no slider.
+ * <h2>Startup and the hit window drive the player's swing</h2>
+ * {@link #startupTicks} and {@link #activeTicks} were stored, persisted and clamped for
+ * weeks while <em>nothing read them</em> — the player had no attack pose, and a wind-up
+ * nobody can see is indistinguishable from lag, so its swing went straight to endlag
+ * through a since-deleted shortcut on the controller. Holding them here anyway is what
+ * made the slice that finally used them (2026-08-05, when the animator delivered the
+ * pose) a substitution rather than a schema change: no config file migrated, no codec
+ * moved, and every world that had been tuning these numbers blind kept them.
+ *
+ * <p>They are on {@code /grandcraft config weapons} now, having been hidden for exactly
+ * as long as they did nothing.
  */
 public record CategorySettings(
 		int startupTicks,

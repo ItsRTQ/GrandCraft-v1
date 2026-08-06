@@ -2,6 +2,7 @@ package com.hrtq.grandcraft.client.mixin;
 
 import com.hrtq.grandcraft.client.render.CombatPoseState;
 import com.hrtq.grandcraft.combat.CombatState;
+import com.hrtq.grandcraft.combat.WeaponCategory;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -27,6 +28,9 @@ public class LivingEntityRenderStateMixin implements CombatPoseState {
 	@Unique
 	private Float grandcraft$travelYaw;
 
+	@Unique
+	private WeaponCategory grandcraft$weapon;
+
 	@Override
 	public CombatState grandcraft$phase() {
 		// Left unset rather than initialised: a mixin field initializer has to be
@@ -46,9 +50,16 @@ public class LivingEntityRenderStateMixin implements CombatPoseState {
 	}
 
 	@Override
-	public void grandcraft$setPhase(CombatState phase, float progress, Float travelYaw) {
+	public WeaponCategory grandcraft$weapon() {
+		return this.grandcraft$weapon;
+	}
+
+	@Override
+	public void grandcraft$setPhase(CombatState phase, float progress, Float travelYaw,
+			WeaponCategory weapon) {
 		this.grandcraft$phase = phase;
 		this.grandcraft$phaseProgress = progress;
 		this.grandcraft$travelYaw = travelYaw;
+		this.grandcraft$weapon = weapon;
 	}
 }

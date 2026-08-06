@@ -24,13 +24,21 @@ import net.minecraft.world.entity.player.Player;
  */
 public enum CombatActor {
 	/**
-	 * The player gets stagger, stamina and an attack lockout, but no wind-up: the
-	 * client plays swing and crit visuals at click time and there is no animation
-	 * layer to hide a server-side delay behind.
+	 * The player has every verb. It had no wind-up for a long time, and the reason was
+	 * never the state machine — the client played swing and crit visuals at click time
+	 * and there was no animation layer to hide a server-side delay behind. Both halves
+	 * of that were answered on 2026-08-05: the animator's four attack clips give the
+	 * wind-up something to show, and {@code MultiPlayerGameMode}'s local hit prediction
+	 * is suppressed so the visuals wait for the blow.
+	 *
+	 * <p><strong>{@code PHASED_MELEE} on the player means something different from what
+	 * it means on a mob.</strong> A mob's melee goal polls {@code canDealDamage} every
+	 * tick; the player is driven by a click, so {@code PlayerAttack} is what carries the
+	 * swing from that click to its active frame.
 	 */
 	PLAYER("player", Player.class,
 			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK,
-					CombatVerb.WEAPONS),
+					CombatVerb.WEAPONS, CombatVerb.PHASED_MELEE),
 			new ActorSettings(
 					0, CombatConstants.DEFAULT_ACTIVE_TICKS, 3, 4,
 					StatRange.of(1.0),
