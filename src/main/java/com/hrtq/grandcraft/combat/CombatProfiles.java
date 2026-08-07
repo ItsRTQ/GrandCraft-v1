@@ -61,7 +61,15 @@ public final class CombatProfiles {
 			// timing and recovery serves purely as an attack lockout. Forcing zero
 			// here keeps the runtime honest with the config screen, which hides that
 			// slider for the same reason.
-			int startup = actor.usesMeleeGoal() ? values.startupTicks() : 0;
+			//
+			// An actor that fights with weapons is the exception, and since 2026-08-07 the
+			// reason the value exists: it is that actor's GLOBAL wind-up, the one number
+			// pacing every swing whatever is in its hand. It reaches the swing through
+			// CombatController.weaponProfile rather than through this profile's melee
+			// timings, but it is stored and clamped here like any other phase length.
+			int startup = actor.usesMeleeGoal() || actor.has(CombatVerb.WEAPONS)
+					? values.startupTicks()
+					: 0;
 			AttackProfile melee =
 					new AttackProfile(startup, values.activeTicks(), values.recoveryTicks());
 

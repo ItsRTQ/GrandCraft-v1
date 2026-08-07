@@ -58,10 +58,15 @@ import net.minecraft.network.chat.Component;
  * ones. It carries the same banking obligation as a category tab, which is what
  * {@link #fieldsAreRules} exists for.
  *
- * <p><strong>Startup and the hit window are still not shown</strong>, even though
- * {@link CategorySettings} stores them. Nothing reads them until the player gets real
- * attack phases, and a field that does nothing is worse than no field — someone will
- * tune it and report the mechanic as broken.
+ * <p><strong>Startup and endlag are stored and not shown</strong>, even though
+ * {@link CategorySettings} keeps them. They drove the player's swing between 2026-08-05
+ * and 2026-08-07 and were shown for exactly that window; both ends of the swing are now
+ * single globals on {@code /grandcraft config combat}, so nothing here reads them again
+ * until a weapon modifies those globals rather than replacing them. A field that does
+ * nothing is worse than no field — someone will tune it and report the mechanic as
+ * broken. <strong>The hit window is the one phase length still owned by the weapon</strong>,
+ * and it has to be: it decides whether a telegraphed swing can connect at all, and it only
+ * means anything against that weapon's own reach.
  *
  * <p>Purely an editor. The server sends the current values, Save sends the edited set
  * back, and the server re-checks permissions and clamps on arrival.
@@ -115,9 +120,7 @@ public class WeaponConfigScreen extends Screen {
 	 */
 	private WeaponCategory fieldsFor;
 
-	private TunableField startup;
 	private TunableField hitWindow;
-	private TunableField endlag;
 	private TunableField staminaCost;
 
 	/**
@@ -253,18 +256,20 @@ public class WeaponConfigScreen extends Screen {
 		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
 		int row = 0;
 
-		// Startup and the hit window were stored but hidden for as long as nothing read
-		// them — a slider that does nothing is worse than no slider. They drive the
-		// player's swing since 2026-08-05, so they are shown, and they are shown first
-		// because they are the order the swing happens in.
-		this.startup = ticks(seed.startupTicks(), CategorySettings.MAX_PHASE_TICKS);
-		row = addValue(grid, row, "startup", this.startup);
-
+		// Startup is stored and NOT shown, for the reason it was hidden before 2026-08-05
+		// and is hidden again since 2026-08-07: nothing reads it, and a slider that does
+		// nothing is worse than no slider — someone tunes it and reports the mechanic as
+		// broken. Both ends of the player's swing are now globals on
+		// /grandcraft config combat: the wind-up since 2026-08-07 and the endlag with it.
+		// The stored values here are untouched and wait for the day a weapon modifies
+		// those globals instead of replacing them, which is the only edit needed to show
+		// these rows again. See Weapons.startupFor and Weapons.recoveryFor.
+		//
+		// The hit window is the one phase length still owned by the weapon, and it is the
+		// one that has to be: it is what decides whether a telegraphed swing can connect
+		// at all, and it only means anything against that weapon's own reach.
 		this.hitWindow = ticks(seed.activeTicks(), CategorySettings.MAX_PHASE_TICKS);
 		row = addValue(grid, row, "hit_window", this.hitWindow);
-
-		this.endlag = ticks(seed.recoveryTicks(), CategorySettings.MAX_PHASE_TICKS);
-		row = addValue(grid, row, "endlag", this.endlag);
 
 		this.staminaCost = unit(seed.staminaCost(), CategorySettings.MAX_COST, "stamina_points");
 		row = addValue(grid, row, "stamina_cost", this.staminaCost);
@@ -370,9 +375,7 @@ public class WeaponConfigScreen extends Screen {
 		this.weightConstitution = null;
 		this.weightArcane = null;
 		this.weightTotal = null;
-		this.startup = null;
 		this.hitWindow = null;
-		this.endlag = null;
 		this.staminaCost = null;
 		this.manaCost = null;
 
@@ -540,9 +543,13 @@ public class WeaponConfigScreen extends Screen {
 		CategorySettings stored = this.working.get(this.fieldsFor);
 
 		return new CategorySettings(
-				this.startup.intValue(),
+				// Carried through, not read: both ends of the swing are globals on
+				// /grandcraft config combat and neither row is on screen. Preserving them
+				// is what lets them come back as modifiers without anyone re-entering
+				// eight numbers.
+				stored.startupTicks(),
 				this.hitWindow.intValue(),
-				this.endlag.intValue(),
+				stored.recoveryTicks(),
 				this.staminaCost.intValue(),
 				new StatWeights(
 						this.weightStrength.intValue(),

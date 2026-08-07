@@ -1,8 +1,10 @@
 package com.hrtq.grandcraft.client.mixin;
 
+import com.hrtq.grandcraft.client.ClientAttackCommit;
 import com.hrtq.grandcraft.network.AttackMissPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
+import net.minecraft.util.Util;
 import net.minecraft.world.phys.HitResult;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -50,5 +52,10 @@ public abstract class MinecraftAttackMissMixin {
 		}
 
 		ClientPlayNetworking.send(new AttackMissPayload());
+
+		// A whiff books a phase exactly like a hit does, so it commits the client the same
+		// way — otherwise spamming at open air stays a phantom factory while spamming at a
+		// mob is fixed. See ClientAttackCommit.
+		ClientAttackCommit.commit(Util.getMillis());
 	}
 }

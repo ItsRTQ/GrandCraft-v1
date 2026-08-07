@@ -47,8 +47,16 @@ public final class GrandCraftClientNetworking {
 		ClientPlayNetworking.registerGlobalReceiver(StaminaPayload.TYPE, (payload, context) ->
 				ClientStamina.accept(payload, Util.getMillis()));
 
-		ClientPlayNetworking.registerGlobalReceiver(CombatPhasePayload.TYPE, (payload, context) ->
-				ClientCombatPhases.accept(payload, Util.getMillis()));
+		ClientPlayNetworking.registerGlobalReceiver(CombatPhasePayload.TYPE, (payload, context) -> {
+			ClientCombatPhases.accept(payload, Util.getMillis());
+
+			// The answer the committed attack was waiting on. Whatever it says — a wind-up
+			// booked, or some other phase entirely — the client now knows, and the phase
+			// governs from here. See ClientAttackCommit.
+			if (context.player() != null && payload.entityId() == context.player().getId()) {
+				ClientAttackCommit.clear();
+			}
+		});
 
 		ClientPlayNetworking.registerGlobalReceiver(ManaPayload.TYPE, (payload, context) ->
 				ClientMana.accept(payload, Util.getMillis()));

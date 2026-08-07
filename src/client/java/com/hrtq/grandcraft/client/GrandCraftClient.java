@@ -168,6 +168,7 @@ public class GrandCraftClient implements ClientModInitializer {
 				// so a single player world does not inherit a server's settings.
 				HealthBarTracker.clear();
 				ClientAttackLockout.clear();
+				ClientAttackCommit.clear();
 				ClientStamina.clear();
 				ClientMana.clear();
 				ClientCombatPhases.clear();

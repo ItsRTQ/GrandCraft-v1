@@ -210,36 +210,41 @@ public class CombatConfigScreen extends Screen {
 			row++;
 		}
 
-		if (actor.usesMeleeGoal() && !actor.has(CombatVerb.WEAPONS)) {
+		// The wind-up is shown for anything that actually has one, and for an actor that
+		// fights with weapons that is THE GLOBAL (user, 2026-08-07): one number pacing
+		// every swing it makes, whatever is in its hand, so a telegraph teaches one
+		// rhythm rather than four. The category's own Startup on /grandcraft config
+		// weapons is no longer read and no longer shown — it comes back the day a weapon
+		// modifies this number rather than replacing it. See Weapons.startupFor.
+		if (actor.usesMeleeGoal() || actor.has(CombatVerb.WEAPONS)) {
 			this.startup = ticks(seed.startupTicks(), ActorSettings.MAX_PHASE_TICKS);
 			row = addValue(grid, row, "startup", false, this.startup);
-
-			this.active = ticks(seed.activeTicks(), ActorSettings.MAX_PHASE_TICKS);
-			row = addValue(grid, row, "active", false, this.active);
 		} else {
-			// Either nothing to delay — an actor whose damage lands on vanilla timing has
-			// neither a wind-up nor a window of ours — or superseded, exactly as endlag is
-			// below: the player got PHASED_MELEE in 2026-08-05, and its three phase
-			// figures all come from the category of whatever it is holding. Two screens
-			// showing the same number is how a tuning change gets reported as a broken
-			// mechanic.
+			// Nothing to delay: an actor whose damage lands on vanilla timing has no
+			// wind-up of ours.
 			//
 			// Cleared rather than left stale, because readFields() uses null to mean
 			// "keep the stored value".
 			this.startup = null;
+		}
+
+		if (actor.usesMeleeGoal() && !actor.has(CombatVerb.WEAPONS)) {
+			this.active = ticks(seed.activeTicks(), ActorSettings.MAX_PHASE_TICKS);
+			row = addValue(grid, row, "active", false, this.active);
+		} else {
+			// Superseded, exactly as endlag is below: the hit window of an actor that
+			// fights with weapons comes from the category of whatever it is holding. Two
+			// screens showing the same number is how a tuning change gets reported as a
+			// broken mechanic.
 			this.active = null;
 		}
 
-		if (actor.has(CombatVerb.WEAPONS)) {
-			// Superseded: this actor's endlag comes from the category of whatever it is
-			// holding, and lives in /grandcraft config weapons. Showing the actor's own
-			// value here would be a field that silently does nothing, which is the way
-			// a tuning change gets reported as a broken mechanic.
-			this.recovery = null;
-		} else {
-			this.recovery = ticks(seed.recoveryTicks(), ActorSettings.MAX_PHASE_TICKS);
-			row = addValue(grid, row, "recovery", false, this.recovery);
-		}
+		// Shown for every actor. For one that fights with weapons this is THE GLOBAL
+		// ENDLAG (user, 2026-08-07), the pair of the wind-up above: it was the category's
+		// between 2026-08-05 and 2026-08-07 and is the actor's again, with the weapon
+		// modifying it later rather than owning it. See Weapons.recoveryFor.
+		this.recovery = ticks(seed.recoveryTicks(), ActorSettings.MAX_PHASE_TICKS);
+		row = addValue(grid, row, "recovery", false, this.recovery);
 
 		this.stagger = ticks(seed.staggerTicks(), ActorSettings.MAX_STAGGER_TICKS);
 		row = addValue(grid, row, "stagger", false, this.stagger);

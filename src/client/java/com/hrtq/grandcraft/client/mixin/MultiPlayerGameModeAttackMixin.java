@@ -1,11 +1,15 @@
 package com.hrtq.grandcraft.client.mixin;
 
+import com.hrtq.grandcraft.client.ClientAttackCommit;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.util.Util;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * Stops the client drawing the hit before the server has dealt it.
@@ -48,6 +52,20 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  */
 @Mixin(MultiPlayerGameMode.class)
 public abstract class MultiPlayerGameModeAttackMixin {
+	/**
+	 * Latches the client's own commitment, because this is the moment the attack packet
+	 * goes out — everything after it is the server's to answer, and until it does the
+	 * client must stop accepting attack input. See {@link ClientAttackCommit} for why the
+	 * phase alone cannot cover that interval.
+	 *
+	 * <p>At HEAD rather than beside the redirect below: the point is that the request has
+	 * been made, which is true whether or not vanilla would have predicted a hit.
+	 */
+	@Inject(method = "attack", at = @At("HEAD"))
+	private void grandcraft$commitAttack(Player player, Entity target, CallbackInfo info) {
+		ClientAttackCommit.commit(Util.getMillis());
+	}
+
 	@Redirect(
 			method = "attack",
 			at = @At(

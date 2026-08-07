@@ -40,7 +40,15 @@ public enum CombatActor {
 			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK,
 					CombatVerb.WEAPONS, CombatVerb.PHASED_MELEE),
 			new ActorSettings(
-					0, CombatConstants.DEFAULT_ACTIVE_TICKS, 3, 4,
+					// THE PLAYER'S GLOBAL WIND-UP (user, 2026-08-07). One number paces
+					// every swing whatever is held, so the telegraph teaches one rhythm
+					// rather than four; a weapon will modify it later rather than replace
+					// it, and Weapons.startupFor is where that lands. Five is MEDIUM's
+					// old figure — the category documented as "the baseline everything
+					// else is judged against", and the one the confirmed sword clip was
+					// timed against — so the swing that has been tested does not move.
+					// It was 0 while nothing read it.
+					5, CombatConstants.DEFAULT_ACTIVE_TICKS, 3, 4,
 					StatRange.of(1.0),
 					StatRange.of(1.0),
 					StatRange.of(1.0),

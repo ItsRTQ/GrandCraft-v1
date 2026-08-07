@@ -350,10 +350,18 @@ public final class CombatController {
 	 *
 	 * <p>Resolved from the main hand only. An off-hand weapon is not what the swing
 	 * comes from, and vanilla's own attack damage is main-hand too.
+	 *
+	 * <p>The wind-up and the endlag are handed <em>in</em> rather than looked up: they are
+	 * the actor's own globals, and passing them keeps {@link Weapons} reading only the
+	 * weapon config. That matters because weapon settings are pushed to every client and
+	 * combat settings are not — so a {@code Weapons} that reached into
+	 * {@code CombatTuning} would answer differently on a client than on the server. See
+	 * {@code Weapons.startupFor} and {@code Weapons.recoveryFor}.
 	 */
 	private static WeaponProfile weaponProfile(LivingEntity entity, CombatProfile profile) {
 		return profile.usesWeapons()
-				? Weapons.profileFor(entity.getMainHandItem())
+				? Weapons.profileFor(entity.getMainHandItem(),
+						profile.melee().startupTicks(), profile.melee().recoveryTicks())
 				: WeaponProfile.fromActor(profile);
 	}
 
@@ -386,6 +394,22 @@ public final class CombatController {
 	 * already do not. Both gates have to clear, so this is whichever runs longer.
 	 * Used to tell a player's client how long to show its attack indicator unfilled.
 	 *
+	 * <p><strong>The whole swing, not the phase it is in.</strong> This reported only
+	 * {@link #stateTicks} until 2026-08-07, which is the current phase's remainder — so
+	 * the packet sent when an attack began described the wind-up alone, and the indicator
+	 * filled up during the startup and then sat full through the active window and the
+	 * whole endlag, telling the player they could swing for most of the time they could
+	 * not. The endlag is exactly the part worth showing: it is the commitment, and it is
+	 * the question the indicator is being asked (user, 2026-08-07).
+	 *
+	 * <p>The phases still to come are read off the latched {@link #attack} rather than
+	 * from the settings, so the figure matches the swing actually in flight even if the
+	 * weapon is swapped or the config edited mid-swing — the same reason the controller
+	 * latches that profile in the first place. Nothing re-sends mid-attack, so the client
+	 * gets one span and counts it out: an active window that ends early would make this
+	 * an over-estimate, and none can — a spent hit lets the window run on ({@link
+	 * #consumeActiveHit}).
+	 *
 	 * <p>Deliberately excludes stamina, even though {@link #canStartAttack} includes
 	 * it. A stamina lockout has no fixed duration — it ends when the pool refills —
 	 * and the stamina bar already shows exactly that. Feeding it into the attack
@@ -397,11 +421,29 @@ public final class CombatController {
 		// make the indicator saw back and forth for as long as the guard is held. A
 		// guard has no countdown to show for the same reason stamina does not: it ends
 		// when the player lets go.
-		int phase = this.state == CombatState.NEUTRAL || this.state == CombatState.GUARDING
-				? 0
-				: this.stateTicks;
+		//
+		// Everything else — the dodge halves, a stagger — is already a single phase that
+		// ends with the actor free, so its own remainder is the whole answer.
+		int phase = switch (this.state) {
+			case NEUTRAL, GUARDING -> 0;
+			case ATTACK_STARTUP -> this.stateTicks + remainingAfterStartup();
+			case ATTACK_ACTIVE -> this.stateTicks + remainingAfterActive();
+			default -> this.stateTicks;
+		};
 
 		return Math.max(this.staggerTicks, phase);
+	}
+
+	/** The active window and the endlag that a wind-up still has ahead of it. */
+	private int remainingAfterStartup() {
+		return this.attack == null
+				? 0
+				: this.attack.activeTicks() + this.attack.recoveryTicks();
+	}
+
+	/** The endlag an open window still has ahead of it. */
+	private int remainingAfterActive() {
+		return this.attack == null ? 0 : this.attack.recoveryTicks();
 	}
 
 	/** True only during the active window, and only until this swing's hit is spent. */
