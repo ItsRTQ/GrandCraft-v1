@@ -59,6 +59,8 @@ public final class BedrockClip {
 		EASE_IN_SINE,
 		EASE_IN_QUAD,
 		EASE_IN_CUBIC,
+		EASE_OUT_QUAD,
+		EASE_IN_OUT_CUBIC,
 
 		/**
 		 * A smooth curve through the surrounding keys rather than a straight line
@@ -77,6 +79,10 @@ public final class BedrockClip {
 				case EASE_IN_SINE -> 1.0F - (float) Math.cos(t * Math.PI / 2.0);
 				case EASE_IN_QUAD -> t * t;
 				case EASE_IN_CUBIC -> t * t * t;
+				case EASE_OUT_QUAD -> t * (2.0F - t);
+				case EASE_IN_OUT_CUBIC -> t < 0.5F
+						? 4.0F * t * t * t
+						: 1.0F - (float) Math.pow(-2.0 * t + 2.0, 3) / 2.0F;
 				default -> t;
 			};
 		}

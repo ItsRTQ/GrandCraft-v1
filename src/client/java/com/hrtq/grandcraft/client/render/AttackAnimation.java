@@ -37,6 +37,22 @@ import net.minecraft.client.model.HumanoidModel;
  * says {@code ATTACK_ACTIVE} and {@code CombatController} cancels the attack when a stagger
  * lands in startup — this file draws the wind-up and decides nothing.
  *
+ * <h2>Two rigs ship at once — 2026-08-06</h2>
+ *
+ * <p>The sword was re-authored on the <strong>Classic rig</strong>
+ * ({@code assets/weapons-wind-up/}), which is vanilla's own skeleton bone for bone — so it
+ * reads {@link HumanoidClipPose.ClipRig#VANILLA_MATCHED} while the other three, still on the
+ * animator's old spine rig, stay {@code SPINE_CHAIN_MIRRORED_ARMS}. That is the whole reason
+ * the convention travels per clip. <strong>When the remaining three are re-authored they
+ * each change one field here and the mirrored arm retires unjudged.</strong>
+ *
+ * <p>The sword clip did not arrive as a Bedrock export — <strong>it was converted out of the
+ * {@code .bbmodel} keyframes by hand</strong>, because two animations in that file share the
+ * name {@code wind_up_sword_front} and the exporter kept picking the empty one. The one
+ * assumption in that conversion is that Blockbench's Bedrock exporter writes keyframe values
+ * unchanged; if the arm comes out inverted on some axis, that is the thing to doubt, and the
+ * clip is the only place to fix it.
+ *
  * <h2>Timing</h2>
  *
  * <p>Startup stretches the clip's authored approach — rest to {@code preparedAt} — over
@@ -78,8 +94,14 @@ public final class AttackAnimation {
 	 *                  sampled: what remains in each clip is a return to an end pose
 	 *                  this rig renders badly, and recovery's fade from the strike's
 	 *                  end does the returning instead.
+	 * @param rig which rig this clip was authored on — see
+	 *            {@link HumanoidClipPose.ClipRig}. <strong>Per clip, because the rig
+	 *            changed under us</strong>: the sword was re-delivered 2026-08-06 on the
+	 *            vanilla-matched Classic rig, the other three are still on the old spine
+	 *            rig.
 	 */
-	private record WindUp(String clip, float from, float preparedAt, float strikeEnd) {
+	private record WindUp(String clip, float from, float preparedAt, float strikeEnd,
+			HumanoidClipPose.ClipRig rig) {
 	}
 
 	/**
@@ -93,15 +115,22 @@ public final class AttackAnimation {
 	 * <p>The user's preferred shape is a delivery that <em>ends</em> on its prepared pose;
 	 * these cutoffs are the sanctioned temporary alternative — an explicit end time per
 	 * clip, centralised here, sampled up to and never past. Each is the last authored
-	 * keyframe before the clip's fast segment, read off the right arm's keyframe times
-	 * (the channel that defines all four motions), <em>not</em> off the largest rotation:
+	 * keyframe before the clip's fast segment, read off the {@code right arm}'s keyframe
+	 * times — the channel that defines all four motions — <em>not</em> off the largest
+	 * rotation:
 	 *
 	 * <pre>
 	 * dagger      chamber to 0.0833, held to 0.2917  → cut at 0.2917
-	 * sword       raise to 0.5417, no hold           → cut at 0.5417
+	 * sword       raise to 0.3333, held to 0.5       → cut at 0.5
 	 * greatsword  raise to 0.5, held to 0.5833       → cut at 0.5833
 	 * staff       settle to 0.2083, held to 0.7083   → cut at 0.7083
 	 * </pre>
+	 *
+	 * <p><strong>The sword is the one that no longer needs a stand-in.</strong> Its
+	 * 2026-08-06 clip is authored in the shape that was asked for — raise, a real hold on
+	 * the charged pose, then a 0.083s strike — so its numbers are read off structure rather
+	 * than guessed at: {@code preparedAt} is where the hold ends and {@code strikeEnd} where
+	 * the downswing lands. Only its return tail is still unplayed.
 	 *
 	 * <p>Where a clip holds its prepared pose, the cutoff is the <em>end</em> of the hold:
 	 * the pose is identical across it, and taking the longer span keeps the approach at
@@ -112,31 +141,21 @@ public final class AttackAnimation {
 	 */
 	/**
 	 * Entry points ({@code from}): where each clip's arm has visibly left rest. The
-	 * sword's raise is ease-in and spends its first quarter second barely off the
-	 * sides — entering at 0.25s picks it up around 32° of raise, which the wind-in
-	 * fade covers from the item-holding stance. The greatsword and staff author their
-	 * t=0 <em>in</em> a ready grip rather than at rest, so they enter at 0; the
-	 * dagger's chamber arrives in two frames and has no rest-like head worth
-	 * skipping.
+	 * greatsword and staff author their t=0 <em>in</em> a ready grip rather than at
+	 * rest, so they enter at 0; the dagger's chamber arrives in two frames and has no
+	 * rest-like head worth skipping. <strong>The sword no longer needs one either</strong>
+	 * — the old delivery was authored from a limp rest the player is never in and had to
+	 * be entered at 0.25s; the 2026-08-06 clip leaves rest on its first key, which on the
+	 * vanilla-matched rig <em>is</em> the player's own stance.
 	 */
-	private static final WindUp DAGGER = new WindUp("wind_up_dagger", 0.0F, 0.2917F, 0.375F);
-	private static final WindUp SWORD = new WindUp("wind_up_sword", 0.25F, 0.5417F, 0.625F);
-	private static final WindUp GREATSWORD = new WindUp("wind_up_greatsword", 0.0F, 0.5833F, 0.6667F);
-	private static final WindUp STAFF = new WindUp("wind_up_staff", 0.0F, 0.7083F, 1.0F);
-
-	/**
-	 * <strong>Experiment, 2026-08-05: mirror the arm channels — set false to restore
-	 * the unmirrored read.</strong>
-	 *
-	 * <p>What runtime showed (four-screenshot sequence, {@code run/screenshots/}): the
-	 * held pose put the hand low, backward and outward, sword flat behind the neck.
-	 * What the user wants is the mirror image of exactly that — hand up, forward and
-	 * across, the start of a {@code \} stroke. The suspected mechanism is the rig
-	 * being built into the opposite x half of bedrock space (right arm at larger x,
-	 * root spun 180° to display right) — {@link HumanoidClipPose}'s apply javadoc has
-	 * the full argument and its honest limits. Judged at runtime only.
-	 */
-	private static final boolean MIRROR_ARMS = true;
+	private static final WindUp DAGGER = new WindUp("wind_up_dagger", 0.0F, 0.2917F, 0.375F,
+			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
+	private static final WindUp SWORD = new WindUp("wind_up_sword_front", 0.0F, 0.5F, 0.5833F,
+			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
+	private static final WindUp GREATSWORD = new WindUp("wind_up_greatsword", 0.0F, 0.5833F, 0.6667F,
+			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
+	private static final WindUp STAFF = new WindUp("wind_up_staff", 0.0F, 0.7083F, 1.0F,
+			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
 
 	/**
 	 * Fraction of startup by which the prepared pose is reached; the rest of the phase
@@ -218,7 +237,7 @@ public final class AttackAnimation {
 				windUp.clip());
 
 		HumanoidClipPose.apply(model, clip, seconds(windUp, phase, progress),
-				blend(phase, progress), ABSOLUTE_CLIP, MIRROR_ARMS);
+				blend(phase, progress), ABSOLUTE_CLIP, windUp.rig());
 	}
 
 	/**

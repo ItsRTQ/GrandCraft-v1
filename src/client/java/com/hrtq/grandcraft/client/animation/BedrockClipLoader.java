@@ -232,6 +232,8 @@ public final class BedrockClipLoader {
 			case "easeInSine" -> BedrockClip.Interpolation.EASE_IN_SINE;
 			case "easeInQuad" -> BedrockClip.Interpolation.EASE_IN_QUAD;
 			case "easeInCubic" -> BedrockClip.Interpolation.EASE_IN_CUBIC;
+			case "easeOutQuad" -> BedrockClip.Interpolation.EASE_OUT_QUAD;
+			case "easeInOutCubic" -> BedrockClip.Interpolation.EASE_IN_OUT_CUBIC;
 			default -> BedrockClip.Interpolation.LINEAR;
 		};
 	}

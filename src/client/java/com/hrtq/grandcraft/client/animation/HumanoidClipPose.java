@@ -83,6 +83,71 @@ public final class HumanoidClipPose {
 	private static final float ARM_PIVOT_X = 5.0F;
 	private static final float ARM_PIVOT_Y = 2.0F;
 
+	/**
+	 * Which rig a clip was authored on. <strong>A property of the clip, not a setting</strong>
+	 * — two rigs have shipped and they need reading differently, so this travels with each
+	 * clip and there is no constant here to get wrong.
+	 */
+	public enum ClipRig {
+		/**
+		 * The animator's spine rig: {@code lower body} / {@code torso} / {@code Upperbody},
+		 * head and arms hanging off the chest, root carrying a 180° bind spin. Everything
+		 * in this class's header describes reading <em>this</em> rig — the spine composed,
+		 * its turn taken out to the whole actor, the limbs paid the difference. Every dodge
+		 * clip, user-confirmed.
+		 */
+		SPINE_CHAIN,
+
+		/**
+		 * As {@link #SPINE_CHAIN}, with the <em>arms'</em> pitch and roll — and the matching
+		 * translation axes — negated: a half-turn conjugation, which is what transplanting a
+		 * bone nested under that 180° root bind onto a vanilla arm with no such parent would
+		 * need. An <em>experiment</em> written against the 2026-08-05 delivery rendering its
+		 * held pose hand-low-and-back, and never judged at runtime. Kept only because the
+		 * dagger, greatsword and staff still ship on that rig; it retires when they are
+		 * re-authored.
+		 */
+		SPINE_CHAIN_MIRRORED_ARMS,
+
+		/**
+		 * The 2026-08-06 Classic rig, which <strong>is</strong> vanilla's skeleton:
+		 * {@code geometry.grandcraft_java_player_classic} — {@code head}, {@code torso},
+		 * {@code right arm} (pivot -5,22,0), {@code left arm} (+5,22,0) and the two legs,
+		 * all siblings of one {@code root}, at vanilla's own pivots and cube sizes. Bone
+		 * for bone onto the part of the same name, nothing conjugated, nothing swapped.
+		 *
+		 * <p><strong>The one behavioural difference is the spine's turn.</strong> On the
+		 * spine rig a chest yaw carries the head and arms with it, so it has to leave
+		 * through {@link #wholeBodyYRot} and turn the actor — see the class header. Here
+		 * the arms hang off {@code root} exactly as vanilla's do, so a torso yaw moves the
+		 * torso cuboid <em>and nothing else</em>, which is what the animator saw in
+		 * Blockbench. It therefore stays on {@code body} and the swing/twist split is not
+		 * taken at all. The first clip on this rig keys the torso only in yaw, so getting
+		 * this wrong would have silently dropped its whole body motion.
+		 *
+		 * <h3>It also carries a half-turn conjugation, on every bone — and that one is
+		 * measured, not reasoned</h3>
+		 *
+		 * <p>These clips are authored in a frame turned 180° about the vertical from
+		 * vanilla's, so every bone's rotation is conjugated by that half turn before it is
+		 * applied: pitch and roll reverse, yaw does not, and translations mirror the same
+		 * two axes. It is the identical operation {@link #SPINE_CHAIN_MIRRORED_ARMS}
+		 * performs — that rig's {@code [0,180,0]} root bind was the animator compensating
+		 * for the same thing, which the Classic rig drops without replacing.
+		 *
+		 * <p><strong>Two independent observations pinned it</strong>, after the unconjugated
+		 * reading shipped and failed. In game the sword came down inverted and swung
+		 * <em>into the player's own chest</em> (user, 2026-08-06). Rendering the clip's held
+		 * pose offline reproduced exactly that — the arm laid across the torso — while the
+		 * conjugated reading put it out to the model's own right, level, matching the
+		 * animator's own GIF frame; and it turns the strike from a backwards swipe into a
+		 * forward drive. Negating X alone would also have moved the arm outward, but it is
+		 * not a change of basis at all — only the X-and-Z pair is a conjugation, which is
+		 * why this is the reading that ships.
+		 */
+		VANILLA_MATCHED
+	}
+
 	private HumanoidClipPose() {
 	}
 
@@ -94,7 +159,7 @@ public final class HumanoidClipPose {
 	 * @param blend   how strongly to apply it, 0 to 1; 1 is the pose as authored
 	 */
 	public static void apply(HumanoidModel<?> model, BedrockClip clip, float seconds, float blend) {
-		apply(model, clip, seconds, blend, false, false);
+		apply(model, clip, seconds, blend, false, ClipRig.SPINE_CHAIN);
 	}
 
 	/**
@@ -132,53 +197,50 @@ public final class HumanoidClipPose {
 	 * tracking the look and the legs must keep the walk cycle; what the attack clips key
 	 * on them are small accents that read correctly as overlays.
 	 *
-	 * <h2>The mirrored-arm experiment</h2>
+	 * <h2>Which rig it was authored on</h2>
 	 *
-	 * <p>{@code mirrorArms} negates the pitch and roll of what the clip asks of the two
-	 * arm bones (and the sideways/depth halves of their translations) — the conjugation
-	 * a rig built into the <em>opposite</em> x half of bedrock space needs. This rig is
-	 * such a rig: its right arm occupies larger x than its left, where a standard
-	 * bedrock humanoid puts the right arm at negative x, and its root carries a 180°
-	 * bind yaw that makes it <em>display</em> the right way round. The sword's held
-	 * pose rendered with the hand low, backward and outward where the intent (user,
-	 * 2026-08-05: the strike is a {@code \} stroke, "the player hand must go up") wants
-	 * it up, forward and across — which is exactly the mirror image this flag applies.
-	 *
-	 * <p><strong>Arms only, and experiment only.</strong> Taken as a theory of the rig
-	 * it would flip the spine too — but the dodge clips are user-confirmed correct
-	 * through the unmirrored path, so this is an empirical arm-scoped switch judged at
-	 * runtime, not a conversion rule. If runtime confirms it, the finding moves to
-	 * {@code BedrockClipLoader}'s notes and the animator conversation.
+	 * <p>{@code rig} says that, and it changes two things: whether the arms are conjugated,
+	 * and whether the spine's turn stays on {@code body} or leaves for the whole actor. See
+	 * {@link ClipRig}, which carries the evidence for each.
 	 */
 	public static void apply(HumanoidModel<?> model, BedrockClip clip, float seconds, float blend,
-			boolean absolute, boolean mirrorArms) {
+			boolean absolute, ClipRig rig) {
 		if (clip.isEmpty() || blend <= 0.0F) {
 			return;
 		}
 
+		boolean vanillaRig = rig == ClipRig.VANILLA_MATCHED;
+
+		// The half-turn conjugation. On the vanilla-matched rig it is the whole clip's —
+		// it is a change of frame, so it applies to every bone; on the spine rig it is the
+		// arms-only experiment. See ClipRig.
+		boolean conjugateArms = vanillaRig || rig == ClipRig.SPINE_CHAIN_MIRRORED_ARMS;
 		BonePose sample = new BonePose();
 
-		// The chest, with its turn taken out — that has gone to the whole actor, and
-		// leaving it here as well would turn the torso twice.
+		// The chest. On the spine rig its turn is taken out — that has gone to the whole
+		// actor, and leaving it here as well would turn the torso twice. On the vanilla-
+		// matched rig there is nothing to take out: a torso yaw there moves the torso and
+		// nothing else, exactly as it does on the part below.
 		//
 		// A clip that never keys the chest carries nothing for the limbs to hang off, so
 		// they are posed against the identity instead — see carriesLimbs.
-		Quaternionf chest = swing(spine(clip, seconds, sample));
+		Quaternionf spine = spine(clip, seconds, sample, vanillaRig);
+		Quaternionf chest = vanillaRig ? spine : swing(spine);
 		Quaternionf carried = carriesLimbs(clip) ? chest : new Quaternionf();
 
 		compose(model.body, chest, blend, absolute);
 
 		// Under the chest. The hat and the sleeve overlays are children of these parts
 		// in the mesh, so they follow without being named.
-		child(model.head, clip, HEAD, seconds, carried, 0.0F, 0.0F, blend, false, false, sample);
+		child(model.head, clip, HEAD, seconds, carried, 0.0F, 0.0F, blend, false, vanillaRig, sample);
 		child(model.rightArm, clip, RIGHT_ARM, seconds, carried,
-				-ARM_PIVOT_X, ARM_PIVOT_Y, blend, absolute, mirrorArms, sample);
+				-ARM_PIVOT_X, ARM_PIVOT_Y, blend, absolute, conjugateArms, sample);
 		child(model.leftArm, clip, LEFT_ARM, seconds, carried,
-				ARM_PIVOT_X, ARM_PIVOT_Y, blend, absolute, mirrorArms, sample);
+				ARM_PIVOT_X, ARM_PIVOT_Y, blend, absolute, conjugateArms, sample);
 
 		// Under the hips, which are not part of the model.
-		direct(model.rightLeg, clip, RIGHT_LEG, seconds, blend, sample);
-		direct(model.leftLeg, clip, LEFT_LEG, seconds, blend, sample);
+		direct(model.rightLeg, clip, RIGHT_LEG, seconds, blend, vanillaRig, sample);
+		direct(model.leftLeg, clip, LEFT_LEG, seconds, blend, vanillaRig, sample);
 	}
 
 	/**
@@ -204,11 +266,15 @@ public final class HumanoidClipPose {
 	 * impulse already produces.
 	 */
 	public static float wholeBodyYRot(BedrockClip clip, float seconds) {
+		// No chest, no turn to export — which is also the right answer for a clip on the
+		// vanilla-matched rig, whose torso yaw stays on the torso. See ClipRig.
 		if (clip.isEmpty() || !carriesLimbs(clip)) {
 			return 0.0F;
 		}
 
-		Quaternionf twist = twist(spine(clip, seconds, new BonePose()));
+		// Unconjugated: only a clip that keys the chest reaches here, and that is the
+		// spine rig — the vanilla-matched clips return above, on carriesLimbs.
+		Quaternionf twist = twist(spine(clip, seconds, new BonePose(), false));
 
 		// The signed angle about Y that this twist represents. Reading it back off the
 		// quaternion rather than out of an Euler decomposition, for the same reason the
@@ -246,16 +312,40 @@ public final class HumanoidClipPose {
 	 * <p>Rotations multiply where offsets would add, but the offsets are dropped
 	 * anyway — see the class notes on why a vanilla torso cannot translate.
 	 */
-	private static Quaternionf spine(BedrockClip clip, float seconds, BonePose sample) {
+	private static Quaternionf spine(BedrockClip clip, float seconds, BonePose sample,
+			boolean conjugate) {
 		Quaternionf spine = new Quaternionf();
 
 		clip.sample(WAIST, seconds, sample);
+		halfTurn(sample, conjugate);
 		spine.mul(quaternionOf(sample.rotation));
 
 		clip.sample(CHEST, seconds, sample);
+		halfTurn(sample, conjugate);
 		spine.mul(quaternionOf(sample.rotation));
 
 		return spine;
+	}
+
+	/**
+	 * Conjugates a sampled bone by a half turn about the vertical, in place — pitch and
+	 * roll reverse, the turn about vertical does not, and translations mirror the same two
+	 * axes. That negation <em>is</em> the conjugation for a Z-Y-X composition:
+	 * {@code Ry(π) Rz(c)Ry(b)Rx(a) Ry(π)⁻¹} is {@code Rz(-c)Ry(b)Rx(-a)}, exactly.
+	 *
+	 * <p>Which clips need it and on what evidence is in {@link ClipRig}. Doing it here on
+	 * the sample rather than on the composed quaternion keeps the positions in step with
+	 * the rotations without a second code path.
+	 */
+	private static void halfTurn(BonePose sample, boolean conjugate) {
+		if (!conjugate) {
+			return;
+		}
+
+		sample.rotation.x = -sample.rotation.x;
+		sample.rotation.z = -sample.rotation.z;
+		sample.position.x = -sample.position.x;
+		sample.position.z = -sample.position.z;
 	}
 
 	/**
@@ -305,18 +395,9 @@ public final class HumanoidClipPose {
 
 	private static void child(ModelPart part, BedrockClip clip, String bone, float seconds,
 			Quaternionf chest, float pivotX, float pivotY, float blend, boolean absolute,
-			boolean mirror, BonePose sample) {
+			boolean conjugate, BonePose sample) {
 		clip.sample(bone, seconds, sample);
-
-		if (mirror) {
-			// The other-x-half conjugation — see the apply javadoc. Pitch and roll
-			// reverse, the turn about vertical does not; translations mirror the same
-			// two axes.
-			sample.rotation.x = -sample.rotation.x;
-			sample.rotation.z = -sample.rotation.z;
-			sample.position.x = -sample.position.x;
-			sample.position.z = -sample.position.z;
-		}
+		halfTurn(sample, conjugate);
 
 		// Where this part's pivot ends up once the chest has tipped, minus where it
 		// started — i.e. how far the shoulder travelled and the arm has to travel with
@@ -331,12 +412,16 @@ public final class HumanoidClipPose {
 	}
 
 	private static void direct(ModelPart part, BedrockClip clip, String bone, float seconds,
-			float blend, BonePose sample) {
+			float blend, boolean conjugate, BonePose sample) {
 		clip.sample(bone, seconds, sample);
 
 		if (sample.isRest()) {
 			return;
 		}
+
+		// After the rest test, which a conjugation cannot change and which decides
+		// whether this leg is keyed at all.
+		halfTurn(sample, conjugate);
 
 		compose(part, quaternionOf(sample.rotation), blend, false);
 		addPosition(part, sample.position, blend);
