@@ -40,21 +40,41 @@ import net.minecraft.world.level.material.MapColor;
  */
 public final class GrandCraftBlocks {
 	/**
-	 * Deepslate's own strength in 26.2, read off {@code Blocks.<clinit>}:
+	 * Deepslate's own blast resistance in 26.2, read off {@code Blocks.<clinit>}:
 	 * {@code strength(3.0F, 6.0F)}.
 	 *
 	 * <p>Verified rather than remembered, and worth doing — deepslate was 3.5 in the
-	 * versions most references describe, and it is 3.0 here. Copied as two named
-	 * constants so the next block that wants "as tough as deepslate" says so.
+	 * versions most references describe, and its destroy time is 3.0 here.
 	 */
-	private static final float DEEPSLATE_DESTROY_TIME = 3.0F;
 	private static final float DEEPSLATE_EXPLOSION_RESISTANCE = 6.0F;
+
+	/**
+	 * A third longer to mine than deepslate's 3.0 (user, 2026-08-08: "slightly stronger").
+	 *
+	 * <p>Destroy time is a linear divisor, so 4.0 against 3.0 is exactly +33% on every
+	 * tool: a diamond pickaxe goes 0.56s → 0.75s, a stone one 1.13s → 1.50s. That is
+	 * about the smallest step that is felt rather than measured — a 3.5 would land
+	 * inside the noise of when the player started holding the button.
+	 *
+	 * <p><strong>Only the mining time moved.</strong> Blast resistance stays at
+	 * deepslate's 6.0, because that describes how the block answers a creeper and
+	 * nothing about it was asked to change. The two are independent numbers and it is
+	 * worth keeping them that way, so a future "make it tougher" can mean one or the
+	 * other rather than both by accident.
+	 */
+	private static final float MANA_CRYSTAL_DESTROY_TIME = 4.0F;
 
 	/**
 	 * A cluster of raw mana, grown out of stone.
 	 *
-	 * <p>Stone's rules, deepslate's numbers: mined with a pickaxe, dropped only with
-	 * one, and slow enough that it reads as something worth the trip.
+	 * <p>Stone's rules, a shade past deepslate's numbers: mined with a pickaxe, dropped
+	 * only with one, and slow enough that it reads as something worth the trip.
+	 *
+	 * <p><strong>It does not drop itself any more.</strong> Breaking it yields 4–6
+	 * Arcane Shards, Fortune-scaled, and only Silk Touch returns the block — the whole
+	 * of that is the loot table, not code. Which is the point: the block states what it
+	 * <em>is</em> (how hard, what tool, what shape) and the loot table states what it
+	 * <em>gives</em>, so retuning a drop never means recompiling.
 	 *
 	 * <p><strong>It takes the default full-cube shape, and that is measured rather than
 	 * assumed.</strong> The 2026-08-07 model is 72 cuboids, and once their rotations are
@@ -72,14 +92,13 @@ public final class GrandCraftBlocks {
 	 * <p>The map colour is measured too: the artist's texture means RGB (80, 168, 212),
 	 * which {@code COLOR_LIGHT_BLUE} sits 27 away from and every other candidate further.
 	 *
-	 * <p>Nothing places it in the world yet: no ore feature, no loot, no recipe. It
-	 * exists in the creative tab and on the end of a pickaxe, which is what was asked
-	 * for.
+	 * <p>Nothing places it in the world yet: no ore feature and no recipe. It exists in
+	 * the creative tab and on the end of a pickaxe, which is what was asked for.
 	 */
 	public static final Block MANA_CRYSTAL = register("mana_crystal", Block::new,
 			BlockBehaviour.Properties.of()
 					.mapColor(MapColor.COLOR_LIGHT_BLUE)
-					.strength(DEEPSLATE_DESTROY_TIME, DEEPSLATE_EXPLOSION_RESISTANCE)
+					.strength(MANA_CRYSTAL_DESTROY_TIME, DEEPSLATE_EXPLOSION_RESISTANCE)
 					.requiresCorrectToolForDrops()
 					.sound(SoundType.AMETHYST)
 					.noOcclusion());

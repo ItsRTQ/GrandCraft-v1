@@ -239,6 +239,21 @@ public final class GrandCraftItems {
 					.component(DataComponents.CONSUMABLE, DRINK));
 
 	/**
+	 * What a Mana Crystal breaks into: the mod's first crafting material.
+	 *
+	 * <p>A plain {@link Item} with no components at all, and that is the point — it has
+	 * no behaviour to describe. How many one gets is not stated here either: the drop
+	 * count and its Fortune scaling live in the block's loot table
+	 * ({@code data/grandcraft/loot_table/blocks/mana_crystal.json}), because "what this
+	 * block yields" is a property of the block, not of the thing it yields. That is the
+	 * same item/config line the weapons draw, one level down.
+	 *
+	 * <p>Stacks to the default 64. The drinks stack to 16 because carrying them is meant
+	 * to be a decision; a raw material is the opposite of that.
+	 */
+	public static final Item ARCANE_SHARD = register("arcane_shard", new Item.Properties());
+
+	/**
 	 * The mod's own creative tab.
 	 *
 	 * <p>Its own rather than a vanilla one because every {@code CreativeModeTabs}

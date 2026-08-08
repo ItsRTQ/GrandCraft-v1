@@ -76,6 +76,7 @@
   "death.attack.gust": "%1$s was blown apart",
   "death.attack.gust.player": "%1$s was blown apart by %2$s",
   "itemGroup.grandcraft": "GrandCraft",
+  "item.grandcraft.arcane_shard": "Arcane Shard",
   "item.grandcraft.claymore": "Claymore",
   "item.grandcraft.dagger": "Dagger",
   "item.grandcraft.health_potion": "Health Potion",
