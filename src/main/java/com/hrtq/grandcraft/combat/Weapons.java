@@ -27,8 +27,9 @@ public final class Weapons {
 		WeaponCategory category = WeaponCategory.of(stack);
 		CategorySettings values = WeaponTuning.current().forCategory(category);
 
-		// The hit window and the cost are the weapon's. The two ends of the swing — what
-		// it commits you to before and after — are the actor's globals.
+		// The hit window and the cost are the weapon's outright. The two ends of the swing
+		// — what it commits you to before and after — are the actor's globals, which the
+		// category may bend by a signed number of ticks but never replace.
 		return new WeaponProfile(category,
 				new AttackProfile(startupFor(startupTicks, category, values),
 						values.activeTicks(),
@@ -39,39 +40,32 @@ public final class Weapons {
 	/**
 	 * How long this actor's wind-up runs with that weapon in hand.
 	 *
-	 * <p><strong>This is the one place the global and the weapon meet, and it is a seam
-	 * rather than an expression</strong> — it exists to be the only edit the day weapons
-	 * start modifying the wind-up.
+	 * <p><strong>This is the one place the global and the weapon meet.</strong> The
+	 * wind-up is the actor's own, from {@code /grandcraft config combat} (user,
+	 * 2026-08-07): one number paces every swing, which is what makes a telegraph
+	 * learnable at all — the four categories were each drifting on their own before it.
+	 * What a category may do is <em>bend</em> that rhythm, not replace it.
 	 *
-	 * <h2>Today: the global, whatever is held</h2>
+	 * <h2>The modifier is signed, and that is the requirement</h2>
 	 *
-	 * <p>The wind-up is the actor's own, from {@code /grandcraft config combat} (user,
-	 * 2026-08-07). One number paces every swing the player makes, which is what makes it
-	 * tunable at all: a telegraph is only readable if the reader learns one rhythm, and
-	 * the four categories were each drifting on their own before this.
+	 * <p>Weapons "may lower it or make it bigger" (user, 2026-08-07), so a category's
+	 * number is an offset rather than a total — a dagger quicker than the rhythm, a
+	 * greatsword slower, and a category with nothing to say leaves the global alone by
+	 * storing zero. Only {@link WeaponCategory#HEAVY} says anything today (+5, to carry
+	 * the greatsword's telegraph), which means every other weapon in the game is
+	 * provably unaffected by this method existing.
 	 *
-	 * <p><strong>The per-category Startup on {@code /grandcraft config weapons} is
-	 * therefore not read</strong>, and its row is hidden rather than left to be tuned —
-	 * the stored value is untouched and waits for the modifier below. Two screens showing
-	 * the same number is how a tuning change gets reported as a broken mechanic;
-	 * {@code CombatConfigScreen} carries the same rule the other way round for endlag.
+	 * <h2>Why the clamp is here and not at the config screen</h2>
 	 *
-	 * <h2>Next: a weapon that can lower it or raise it</h2>
-	 *
-	 * <p>The stated intent (user, 2026-08-07: weapons "may lower it or make it bigger") is
-	 * that the category's number becomes <em>signed</em> against the global rather than a
-	 * total — a dagger quicker than the rhythm, a greatsword slower — so whatever lands
-	 * here has to be able to go both ways from the global, and the result still has to be
-	 * a legal phase length. {@code category} and {@code values} are already in hand for
-	 * exactly that; nothing else in the swing path needs to know it happened.
-	 *
-	 * <p>Whichever form it takes, clamp it here: {@link AttackProfile} throws on a
-	 * negative wind-up, and this runs on the swing rather than at the config screen, so a
-	 * modifier that could reach below zero would crash the attack rather than the edit.
+	 * <p>{@link AttackProfile} throws on a negative phase, and it is constructed <em>on
+	 * the swing</em>. A modifier is stored signed and clamped only against its own
+	 * bounds, so nothing before this point can guarantee the sum is legal: a global of 2
+	 * with a modifier of -5 is two perfectly valid numbers. Clamping the sum here is what
+	 * turns that into a 0 tick wind-up instead of a crashed attack.
 	 */
 	private static int startupFor(int startupTicks, WeaponCategory category,
 			CategorySettings values) {
-		return startupTicks;
+		return clampPhase(startupTicks + values.startupModifier());
 	}
 
 	/**
@@ -91,9 +85,25 @@ public final class Weapons {
 	 * of a whiff, and it is what makes spacing a decision rather than a formality
 	 * ({@code product-goal.md}). A modifier here is the strongest single lever a weapon
 	 * will have.
+	 *
+	 * <p><strong>Every category stores zero today</strong>, so endlag is the global for
+	 * everything. That is deliberate rather than unfinished: the pre-global config had
+	 * 40 ticks of claymore recovery, and nobody ever judged that by eye. It is a
+	 * judgement to make once a heavy swing can be watched, not one to inherit.
 	 */
 	private static int recoveryFor(int recoveryTicks, WeaponCategory category,
 			CategorySettings values) {
-		return recoveryTicks;
+		return clampPhase(recoveryTicks + values.recoveryModifier());
+	}
+
+	/**
+	 * A phase length the {@link AttackProfile} constructor will accept.
+	 *
+	 * <p>Shared by both seams because "what is a legal phase" is one rule, not two — the
+	 * asymmetry between wind-up and endlag is in what they are worth, not in what the
+	 * engine will take.
+	 */
+	private static int clampPhase(int ticks) {
+		return Math.clamp(ticks, 0, CategorySettings.MAX_PHASE_TICKS);
 	}
 }

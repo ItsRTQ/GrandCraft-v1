@@ -96,9 +96,9 @@ public final class AttackAnimation {
 	 *                  end does the returning instead.
 	 * @param rig which rig this clip was authored on — see
 	 *            {@link HumanoidClipPose.ClipRig}. <strong>Per clip, because the rig
-	 *            changed under us</strong>: the sword was re-delivered 2026-08-06 on the
-	 *            vanilla-matched Classic rig, the other three are still on the old spine
-	 *            rig.
+	 *            changed under us</strong>: the sword was re-delivered 2026-08-06 and the
+	 *            greatsword 2026-08-07, both on the vanilla-matched Classic rig; the
+	 *            dagger and staff are still on the old spine rig and are still owed.
 	 */
 	private record WindUp(String clip, float from, float preparedAt, float strikeEnd,
 			HumanoidClipPose.ClipRig rig) {
@@ -122,15 +122,16 @@ public final class AttackAnimation {
 	 * <pre>
 	 * dagger      chamber to 0.0833, held to 0.2917  → cut at 0.2917
 	 * sword       raise to 0.3333, held to 0.5       → cut at 0.5
-	 * greatsword  raise to 0.5, held to 0.5833       → cut at 0.5833
+	 * greatsword  raise to 0.25, held to 0.91667     → cut at 0.91667
 	 * staff       settle to 0.2083, held to 0.7083   → cut at 0.7083
 	 * </pre>
 	 *
-	 * <p><strong>The sword is the one that no longer needs a stand-in.</strong> Its
-	 * 2026-08-06 clip is authored in the shape that was asked for — raise, a real hold on
-	 * the charged pose, then a 0.083s strike — so its numbers are read off structure rather
-	 * than guessed at: {@code preparedAt} is where the hold ends and {@code strikeEnd} where
-	 * the downswing lands. Only its return tail is still unplayed.
+	 * <p><strong>The sword and the greatsword no longer need a stand-in.</strong> Both are
+	 * authored in the shape that was asked for — raise, a real hold on the charged pose,
+	 * then a 0.083s strike — so their numbers are read off structure rather than guessed
+	 * at: {@code preparedAt} is where the hold ends and {@code strikeEnd} where the
+	 * downswing lands. Only their tails are still unplayed. The greatsword's hold is
+	 * 13 ticks of the clip's 27.5, which is why it survives being played in ten.
 	 *
 	 * <p>Where a clip holds its prepared pose, the cutoff is the <em>end</em> of the hold:
 	 * the pose is identical across it, and taking the longer span keeps the approach at
@@ -141,19 +142,19 @@ public final class AttackAnimation {
 	 */
 	/**
 	 * Entry points ({@code from}): where each clip's arm has visibly left rest. The
-	 * greatsword and staff author their t=0 <em>in</em> a ready grip rather than at
-	 * rest, so they enter at 0; the dagger's chamber arrives in two frames and has no
-	 * rest-like head worth skipping. <strong>The sword no longer needs one either</strong>
-	 * — the old delivery was authored from a limp rest the player is never in and had to
-	 * be entered at 0.25s; the 2026-08-06 clip leaves rest on its first key, which on the
-	 * vanilla-matched rig <em>is</em> the player's own stance.
+	 * staff authors its t=0 <em>in</em> a ready grip rather than at rest, so it enters at
+	 * 0; the dagger's chamber arrives in two frames and has no rest-like head worth
+	 * skipping. <strong>The sword and greatsword no longer need one either</strong> — the
+	 * old sword delivery was authored from a limp rest the player is never in and had to
+	 * be entered at 0.25s; both Classic-rig clips leave rest on their first key, which on
+	 * the vanilla-matched rig <em>is</em> the player's own stance.
 	 */
 	private static final WindUp DAGGER = new WindUp("wind_up_dagger", 0.0F, 0.2917F, 0.375F,
 			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
 	private static final WindUp SWORD = new WindUp("wind_up_sword_front", 0.0F, 0.5F, 0.5833F,
 			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
-	private static final WindUp GREATSWORD = new WindUp("wind_up_greatsword", 0.0F, 0.5833F, 0.6667F,
-			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
+	private static final WindUp GREATSWORD = new WindUp("wind_up_greatsword", 0.0F, 0.91667F, 1.0F,
+			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
 	private static final WindUp STAFF = new WindUp("wind_up_staff", 0.0F, 0.7083F, 1.0F,
 			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
 

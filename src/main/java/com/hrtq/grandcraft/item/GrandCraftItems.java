@@ -303,6 +303,21 @@ public final class GrandCraftItems {
 		return Math.round(seconds * TICKS_PER_SECOND);
 	}
 
+	/**
+	 * Puts an item registered elsewhere into the mod's creative tab.
+	 *
+	 * <p>Exists for {@code GrandCraftBlocks}: a block's item is built by the block
+	 * registration, not by {@link #register}, and there is no reason for a block to
+	 * be missing from the tab because of where its item was made.
+	 *
+	 * <p>Safe to call after {@link #TAB} has been built — the tab's {@code
+	 * displayItems} callback reads {@link #ALL} when the tab's contents are
+	 * gathered, not when it is registered.
+	 */
+	public static void addToCreativeTab(Item item) {
+		ALL.add(item);
+	}
+
 	private static Item register(String name, Item.Properties properties) {
 		return register(name, Item::new, properties);
 	}

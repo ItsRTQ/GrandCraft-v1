@@ -63,11 +63,28 @@ public final class BedrockClip {
 		EASE_IN_OUT_CUBIC,
 
 		/**
+		 * The one easing here that leaves its own lane: it dips <em>below</em> zero
+		 * early, so the segment first travels a little away from its destination before
+		 * turning round and arriving fast.
+		 *
+		 * <p>That overshoot is the point, not a defect. The greatsword's downswing keys
+		 * it on the strike (2026-08-07 delivery), where it reads as the arms loading a
+		 * fraction further back before the blow — the anticipation a heavy swing wants.
+		 * A value between two keyframes therefore leaves the range they span, which is
+		 * safe here because every consumer slerps or lerps rather than indexing.
+		 */
+		EASE_IN_BACK,
+
+		/**
 		 * A smooth curve through the surrounding keys rather than a straight line
 		 * between two of them. Unlike the easings this reads the neighbouring
 		 * keyframes, so it is applied by the channel rather than by reshaping {@code t}.
 		 */
 		CATMULLROM;
+
+		/** How far {@link #EASE_IN_BACK} travels the wrong way first. */
+		private static final float BACK_OVERSHOOT = 1.70158F;
+		private static final float BACK_OVERSHOOT_CUBIC = BACK_OVERSHOOT + 1.0F;
 
 		/**
 		 * Reshapes progress through a segment. An easing bends time and leaves the
@@ -83,6 +100,9 @@ public final class BedrockClip {
 				case EASE_IN_OUT_CUBIC -> t < 0.5F
 						? 4.0F * t * t * t
 						: 1.0F - (float) Math.pow(-2.0 * t + 2.0, 3) / 2.0F;
+				// Blockbench's own constants: 1.70158 is the overshoot, and the cubic
+				// term is one more than it so the curve still lands exactly on 1.
+				case EASE_IN_BACK -> BACK_OVERSHOOT_CUBIC * t * t * t - BACK_OVERSHOOT * t * t;
 				default -> t;
 			};
 		}

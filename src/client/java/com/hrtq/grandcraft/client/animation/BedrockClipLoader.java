@@ -207,10 +207,13 @@ public final class BedrockClipLoader {
 	 * as a straight line is a clip that looks slightly flat; one that throws is a render
 	 * thread that dies.
 	 *
-	 * <p>Only the three functions the attack delivery actually uses are named. There are
-	 * a few dozen in Blockbench's list and enumerating them all speculatively would be
-	 * writing code against clips that do not exist — <strong>add the case when a clip
-	 * turns up using it</strong>, which is exactly how this method came to exist at all.
+	 * <p>Only the functions the deliveries actually use are named. There are a few dozen
+	 * in Blockbench's list and enumerating them all speculatively would be writing code
+	 * against clips that do not exist — <strong>add the case when a clip turns up using
+	 * it</strong>, which is exactly how this method came to exist at all, and how
+	 * {@code easeInBack} joined it when the greatsword arrived keying its downswing with
+	 * one. <strong>Check a new delivery's easings against this switch</strong>: an
+	 * unlisted one is silent, and "the swing looks flat" is the only symptom.
 	 */
 	private static BedrockClip.Interpolation interpolation(JsonElement element) {
 		if (!element.isJsonObject()) {
@@ -234,6 +237,7 @@ public final class BedrockClipLoader {
 			case "easeInCubic" -> BedrockClip.Interpolation.EASE_IN_CUBIC;
 			case "easeOutQuad" -> BedrockClip.Interpolation.EASE_OUT_QUAD;
 			case "easeInOutCubic" -> BedrockClip.Interpolation.EASE_IN_OUT_CUBIC;
+			case "easeInBack" -> BedrockClip.Interpolation.EASE_IN_BACK;
 			default -> BedrockClip.Interpolation.LINEAR;
 		};
 	}

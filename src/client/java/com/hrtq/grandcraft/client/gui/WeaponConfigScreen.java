@@ -58,15 +58,16 @@ import net.minecraft.network.chat.Component;
  * ones. It carries the same banking obligation as a category tab, which is what
  * {@link #fieldsAreRules} exists for.
  *
- * <p><strong>Startup and endlag are stored and not shown</strong>, even though
- * {@link CategorySettings} keeps them. They drove the player's swing between 2026-08-05
- * and 2026-08-07 and were shown for exactly that window; both ends of the swing are now
- * single globals on {@code /grandcraft config combat}, so nothing here reads them again
- * until a weapon modifies those globals rather than replacing them. A field that does
- * nothing is worse than no field — someone will tune it and report the mechanic as
- * broken. <strong>The hit window is the one phase length still owned by the weapon</strong>,
- * and it has to be: it decides whether a telegraphed swing can connect at all, and it only
- * means anything against that weapon's own reach.
+ * <p><strong>The two ends of the swing are back, as modifiers</strong> (2026-08-07).
+ * They were absolutes here between 2026-08-05 and 2026-08-07, then hidden for a
+ * fortnight once both ends became globals on {@code /grandcraft config combat} — a field
+ * that does nothing is worse than no field, because someone will tune it and report the
+ * mechanic as broken. What brought them back is that they now do something: a signed
+ * offset from the global, which is how a greatsword telegraphs longer than a dagger
+ * without either escaping the rhythm the player has learned. <strong>The hit window
+ * between them is the one phase length still owned by the weapon</strong>, and it has to
+ * be: it decides whether a telegraphed swing can connect at all, and it only means
+ * anything against that weapon's own reach.
  *
  * <p>Purely an editor. The server sends the current values, Save sends the edited set
  * back, and the server re-checks permissions and clamps on arrival.
@@ -120,7 +121,9 @@ public class WeaponConfigScreen extends Screen {
 	 */
 	private WeaponCategory fieldsFor;
 
+	private TunableField windUpModifier;
 	private TunableField hitWindow;
+	private TunableField endlagModifier;
 	private TunableField staminaCost;
 
 	/**
@@ -247,7 +250,7 @@ public class WeaponConfigScreen extends Screen {
 	/**
 	 * Every value for the open category, in one grid.
 	 *
-	 * <p>Nine rows for a category that only swings, fifteen for the one that casts.
+	 * <p>Eleven rows for a category that only swings, seventeen for the one that casts.
 	 * Ordered the way someone tuning it would work: what a swing commits you to, what
 	 * it costs, who it rewards, then the cast — and within the first of those, the order
 	 * the swing itself happens in.
@@ -256,20 +259,27 @@ public class WeaponConfigScreen extends Screen {
 		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
 		int row = 0;
 
-		// Startup is stored and NOT shown, for the reason it was hidden before 2026-08-05
-		// and is hidden again since 2026-08-07: nothing reads it, and a slider that does
-		// nothing is worse than no slider — someone tunes it and reports the mechanic as
-		// broken. Both ends of the player's swing are now globals on
-		// /grandcraft config combat: the wind-up since 2026-08-07 and the endlag with it.
-		// The stored values here are untouched and wait for the day a weapon modifies
-		// those globals instead of replacing them, which is the only edit needed to show
-		// these rows again. See Weapons.startupFor and Weapons.recoveryFor.
+		// The three rows of the swing, in the order it happens. The two ends are
+		// MODIFIERS and the middle is a length, which is why they are not one kind of
+		// row: the wind-up and the endlag are globals on /grandcraft config combat, and
+		// what a category may do is bend that rhythm by a signed number of ticks. The
+		// day that stopped being true — 2026-08-07, when the greatsword's telegraph
+		// needed ten ticks and the global was five — is the day these rows came back
+		// after a fortnight hidden. See Weapons.startupFor and Weapons.recoveryFor.
 		//
+		// They read zero for every category but Heavy, and a zero row is honest here in
+		// a way a dead row never was: it says this weapon keeps the rhythm.
+		this.windUpModifier = modifier(seed.startupModifier());
+		row = addValue(grid, row, "wind_up_modifier", this.windUpModifier);
+
 		// The hit window is the one phase length still owned by the weapon, and it is the
 		// one that has to be: it is what decides whether a telegraphed swing can connect
 		// at all, and it only means anything against that weapon's own reach.
 		this.hitWindow = ticks(seed.activeTicks(), CategorySettings.MAX_PHASE_TICKS);
 		row = addValue(grid, row, "hit_window", this.hitWindow);
+
+		this.endlagModifier = modifier(seed.recoveryModifier());
+		row = addValue(grid, row, "endlag_modifier", this.endlagModifier);
 
 		this.staminaCost = unit(seed.staminaCost(), CategorySettings.MAX_COST, "stamina_points");
 		row = addValue(grid, row, "stamina_cost", this.staminaCost);
@@ -375,7 +385,9 @@ public class WeaponConfigScreen extends Screen {
 		this.weightConstitution = null;
 		this.weightArcane = null;
 		this.weightTotal = null;
+		this.windUpModifier = null;
 		this.hitWindow = null;
+		this.endlagModifier = null;
 		this.staminaCost = null;
 		this.manaCost = null;
 
@@ -424,6 +436,20 @@ public class WeaponConfigScreen extends Screen {
 
 	private TunableField ticks(int value, int max) {
 		return unit(value, max, "ticks");
+	}
+
+	/**
+	 * A signed offset from one of the actor's globals, in ticks.
+	 *
+	 * <p>The one field on this screen whose minimum is negative, because a modifier that
+	 * could only add would say a dagger and a sword swing alike. {@code TunableField}
+	 * needs nothing special for it — {@code Integer.valueOf} takes the sign and the
+	 * length allowance already covers it.
+	 */
+	private TunableField modifier(int value) {
+		return new TunableField(this.font, FIELD_WIDTH, FIELD_HEIGHT,
+				Component.translatable("screen.grandcraft.config.ticks"),
+				-CategorySettings.MAX_MODIFIER_TICKS, CategorySettings.MAX_MODIFIER_TICKS, value);
 	}
 
 	/** Units shared with the combat screen, so the two screens name things alike. */
@@ -543,13 +569,9 @@ public class WeaponConfigScreen extends Screen {
 		CategorySettings stored = this.working.get(this.fieldsFor);
 
 		return new CategorySettings(
-				// Carried through, not read: both ends of the swing are globals on
-				// /grandcraft config combat and neither row is on screen. Preserving them
-				// is what lets them come back as modifiers without anyone re-entering
-				// eight numbers.
-				stored.startupTicks(),
+				this.windUpModifier.intValue(),
 				this.hitWindow.intValue(),
-				stored.recoveryTicks(),
+				this.endlagModifier.intValue(),
 				this.staminaCost.intValue(),
 				new StatWeights(
 						this.weightStrength.intValue(),

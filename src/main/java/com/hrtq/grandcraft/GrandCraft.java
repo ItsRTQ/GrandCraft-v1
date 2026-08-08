@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft;
 
+import com.hrtq.grandcraft.block.GrandCraftBlocks;
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.GrandCraftCombat;
 import com.hrtq.grandcraft.combat.VanillaWeaponRequirements;
@@ -55,6 +56,11 @@ public class GrandCraft implements ModInitializer {
 		GrandCraftEffects.register();
 
 		GrandCraftItems.register();
+
+		// After the items: a block registers its own BlockItem into their creative
+		// tab, so the tab and its backing list have to exist first.
+		GrandCraftBlocks.register();
+
 		VanillaWeaponRequirements.register();
 		GrandCraftEntities.register();
 		GrandCraftAttachments.register();
