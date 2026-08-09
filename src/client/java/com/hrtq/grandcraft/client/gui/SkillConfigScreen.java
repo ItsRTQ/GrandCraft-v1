@@ -44,9 +44,25 @@ public class SkillConfigScreen extends Screen {
 	private static final int CHROME_HEIGHT = 80;
 	private static final int MIN_CONTENT_HEIGHT = 60;
 
+	/**
+	 * <strong>The first field is a sentinel.</strong> {@link #init()} probes it to tell
+	 * "the screen has widgets on it" from "this is the first build", and {@link #reset()}
+	 * nulls it to say the widgets are gone. Both break silently if the field declared
+	 * first stops being the field they name, so <strong>new rows go on the end</strong>.
+	 */
 	private TunableField combatMasterDamage;
 	private TunableField combatMasterSpeed;
 	private TunableField combatMasterWindow;
+
+	private TunableField acrobatDashSpeed;
+	private TunableField acrobatDashLift;
+	private TunableField acrobatDashCost;
+	private TunableField acrobatWallHooks;
+	private TunableField acrobatHangDrain;
+	private TunableField acrobatHangDamage;
+	private TunableField acrobatHitCost;
+	private TunableField acrobatGroundReset;
+	private TunableField acrobatHookCooldown;
 
 	/** What the fields held before a rebuild, so a resize does not discard edits. */
 	private SkillSettings working;
@@ -82,7 +98,43 @@ public class SkillConfigScreen extends Screen {
 
 		this.combatMasterWindow = unit(seed.combatMasterWindowTicks(),
 				SkillSettings.MAX_WINDOW_TICKS, "ticks");
-		addRow(grid, row, "combat_master_window", this.combatMasterWindow);
+		row = addRow(grid, row, "combat_master_window", this.combatMasterWindow);
+
+		this.acrobatDashSpeed = unit(seed.acrobatDashSpeed(),
+				SkillSettings.MAX_DASH_SPEED, "hundredths_per_tick");
+		row = addRow(grid, row, "acrobat_dash_speed", this.acrobatDashSpeed);
+
+		this.acrobatDashLift = unit(seed.acrobatDashLift(),
+				SkillSettings.MAX_DASH_LIFT, "hundredths_per_tick");
+		row = addRow(grid, row, "acrobat_dash_lift", this.acrobatDashLift);
+
+		this.acrobatDashCost = unit(seed.acrobatDashCost(),
+				SkillSettings.MAX_STAMINA_COST, "stamina_points");
+		row = addRow(grid, row, "acrobat_dash_cost", this.acrobatDashCost);
+
+		this.acrobatWallHooks = unit(seed.acrobatWallHooks(),
+				SkillSettings.MAX_WALL_HOOKS, "count");
+		row = addRow(grid, row, "acrobat_wall_hooks", this.acrobatWallHooks);
+
+		this.acrobatHangDrain = unit(seed.acrobatHangDrainPerSecond(),
+				SkillSettings.MAX_DRAIN_PER_SECOND, "per_second");
+		row = addRow(grid, row, "acrobat_hang_drain", this.acrobatHangDrain);
+
+		this.acrobatHangDamage = unit(seed.acrobatHangDamagePercent(),
+				SkillSettings.MAX_REDUCTION_PERCENT, "percent");
+		row = addRow(grid, row, "acrobat_hang_damage", this.acrobatHangDamage);
+
+		this.acrobatHitCost = unit(seed.acrobatHitStaminaCost(),
+				SkillSettings.MAX_STAMINA_COST, "stamina_points");
+		row = addRow(grid, row, "acrobat_hit_cost", this.acrobatHitCost);
+
+		this.acrobatGroundReset = unit(seed.acrobatGroundResetTicks(),
+				SkillSettings.MAX_ACROBAT_TICKS, "ticks");
+		row = addRow(grid, row, "acrobat_ground_reset", this.acrobatGroundReset);
+
+		this.acrobatHookCooldown = unit(seed.acrobatHookCooldownTicks(),
+				SkillSettings.MAX_ACROBAT_TICKS, "ticks");
+		addRow(grid, row, "acrobat_hook_cooldown", this.acrobatHookCooldown);
 
 		ScrollableLayout values = new ScrollableLayout(this.minecraft, grid,
 				Math.max(MIN_CONTENT_HEIGHT, this.height - CHROME_HEIGHT),
@@ -145,7 +197,16 @@ public class SkillConfigScreen extends Screen {
 		return new SkillSettings(
 				this.combatMasterDamage.intValue(),
 				this.combatMasterSpeed.intValue(),
-				this.combatMasterWindow.intValue());
+				this.combatMasterWindow.intValue(),
+				this.acrobatDashSpeed.intValue(),
+				this.acrobatDashLift.intValue(),
+				this.acrobatDashCost.intValue(),
+				this.acrobatWallHooks.intValue(),
+				this.acrobatHangDrain.intValue(),
+				this.acrobatHangDamage.intValue(),
+				this.acrobatHitCost.intValue(),
+				this.acrobatGroundReset.intValue(),
+				this.acrobatHookCooldown.intValue());
 	}
 
 	/** Back to the mod's defaults, not to what the screen opened with. */

@@ -61,6 +61,8 @@ public final class GrandCraftNetworking {
 		PayloadTypeRegistry.serverboundPlay()
 				.register(DodgePayload.TYPE, DodgePayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay()
+				.register(AirDashPayload.TYPE, AirDashPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
 				.register(GuardPayload.TYPE, GuardPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay()
 				.register(ApplyStatConfigPayload.TYPE, ApplyStatConfigPayload.STREAM_CODEC);

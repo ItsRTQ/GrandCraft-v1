@@ -157,6 +157,18 @@ public final class GrandCraftKeyMappings {
 					// drained
 				}
 			}
+
+			// Here rather than in END_CLIENT_TICK, and it is not a preference: by the tail
+			// of the tick the player has already left the ground, so a ground jump would
+			// read as a mid-air one. See ClientAcrobat.
+			ClientAcrobat.tick(client);
+
+			// Vanilla reads jump through isDown, so nothing consumes these and the queue
+			// would grow for as long as the game runs. Drained rather than read, because
+			// the dash is driven by an edge — a held key manufactures clicks here.
+			while (client.options.keyJump.consumeClick()) {
+				// drained
+			}
 		});
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {

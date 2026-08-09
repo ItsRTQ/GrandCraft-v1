@@ -3,6 +3,7 @@ package com.hrtq.grandcraft.mixin;
 import com.hrtq.grandcraft.combat.CombatController;
 import com.hrtq.grandcraft.combat.PlayerAttack;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import com.hrtq.grandcraft.skill.Acrobat;
 import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,6 +38,12 @@ public class LivingEntityMixin {
 			// entered ATTACK_ACTIVE this tick for there to be a frame to land on.
 			// Returns immediately for anything that is not a player mid-swing.
 			PlayerAttack.tick(self, controller);
+
+			// Also after, and for a related reason: the controller has already counted
+			// this tick's ground contact and already let go of a grip that landed, so
+			// what this reads is the current state rather than the previous one.
+			// Returns immediately for anything that is not a player.
+			Acrobat.tick(self, controller);
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.mixin;
 
 import com.hrtq.grandcraft.combat.MeleeDamage;
+import com.hrtq.grandcraft.skill.Acrobat;
 import com.hrtq.grandcraft.skill.CombatMaster;
 import com.hrtq.grandcraft.skill.SkillMilestones;
 import com.hrtq.grandcraft.skill.SkillObjective;
@@ -113,7 +114,11 @@ public abstract class PlayerAttackMixin {
 		// same kind those already expect. It also reaches the defender's guard: a block
 		// costs stamina in proportion to the damage absorbed, so an empowered blow
 		// drains a raised guard half again as hard.
-		return scaling.damage() * CombatMaster.empowerSwing(self);
+		// The Outlaw's Acrobat, on the same term and for the same reasons: a swing thrown
+		// while hanging off a wall is worth less, and because the multiplier goes here it
+		// also drains a defender's guard proportionally less. Exactly 1.0 for anyone not
+		// on a wall, so the ordinary swing is arithmetically untouched.
+		return scaling.damage() * CombatMaster.empowerSwing(self) * Acrobat.swingScale(self);
 	}
 
 	/**

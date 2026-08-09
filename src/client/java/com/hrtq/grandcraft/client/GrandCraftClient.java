@@ -173,6 +173,7 @@ public class GrandCraftClient implements ClientModInitializer {
 				ClientMana.clear();
 				ClientCombatPhases.clear();
 				ClientCombatMaster.clear();
+				ClientAcrobat.clear();
 				ClientGuard.clear();
 				RadialMenu.clear();
 				ClientGameSettings.set(GameSettings.DEFAULT);

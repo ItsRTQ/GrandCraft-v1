@@ -1,10 +1,12 @@
 package com.hrtq.grandcraft.combat;
 
+import com.hrtq.grandcraft.network.AirDashPayload;
 import com.hrtq.grandcraft.network.AttackLockoutPayload;
 import com.hrtq.grandcraft.network.AttackMissPayload;
 import com.hrtq.grandcraft.network.DodgePayload;
 import com.hrtq.grandcraft.network.GuardPayload;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
+import com.hrtq.grandcraft.skill.Acrobat;
 import com.hrtq.grandcraft.skill.CombatMaster;
 import com.hrtq.grandcraft.skill.SkillMilestones;
 import com.hrtq.grandcraft.skill.SkillObjective;
@@ -90,6 +92,13 @@ public final class GrandCraftCombat {
 
 					CombatController controller = controllerOf(entity);
 					controller.applyStagger(entity);
+
+					// Here rather than inside applyStagger, and the distinction is the one
+					// breakGuard documents: applyStagger routes through the stagger
+					// tracker, which suppresses the third consecutive reaction so that
+					// pressure cannot stunlock. Right for staggering, wrong for this —
+					// being knocked off a wall has to happen on every hit that lands.
+					Acrobat.onHit(entity, controller);
 
 					// A stagger locks a player out of attacking, so their indicator
 					// needs to know just as much as it does after their own swing.
@@ -286,6 +295,28 @@ public final class GrandCraftCombat {
 		registerMissPenalty();
 		registerDodge();
 		registerGuard();
+		registerAirDash();
+	}
+
+	/**
+	 * Answers the Outlaw's mid-air jump.
+	 *
+	 * <p>Here beside the dodge rather than in {@code GrandCraftNetworking}, because this
+	 * is a combat verb and that is where the combat receivers live. The rules are
+	 * {@code skill/Acrobat}'s entirely — this method's whole job is to turn two floats
+	 * into a vector and hand it over.
+	 *
+	 * <p>Silently ignored when refused, like the dodge and the miss report: there was no
+	 * dash, and the absence of one is the message.
+	 */
+	private static void registerAirDash() {
+		ServerPlayNetworking.registerGlobalReceiver(AirDashPayload.TYPE, (payload, context) -> {
+			// Zero is a legitimate value here, meaning "no movement input at all", and
+			// Acrobat turns it into the look angle. Deliberately not substituted on the
+			// client, where the dodge's backstep default would send a standing player
+			// backwards out of their own jump.
+			Acrobat.requestDash(context.player(), new Vec3(payload.x(), 0.0, payload.z()));
+		});
 	}
 
 	/**

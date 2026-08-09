@@ -17,6 +17,7 @@ import com.hrtq.grandcraft.stats.StatSettings;
 import com.hrtq.grandcraft.stats.StatTuning;
 import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
@@ -88,6 +89,35 @@ public final class CombatController {
 	 * the window, not whichever was applied last.
 	 */
 	private static final Identifier EMPOWER_SPEED_ID = GrandCraft.id("empower_speed");
+
+	/**
+	 * Cancels gravity while an actor is hanging on a wall — the Outlaw's Acrobat, today.
+	 *
+	 * <p>An attribute rather than {@code Entity.setNoGravity}, which writes
+	 * {@code NoGravity} into the entity's NBT: a session that ended badly mid-hang would
+	 * bring the player back permanently airborne. A transient modifier dies with the
+	 * entity, which is the failure mode worth having.
+	 *
+	 * <p>{@code Attributes.GRAVITY} is registered syncable in 26.2, so this reaches the
+	 * owning client and its own {@code LocalPlayer} physics stop falling too. That is the
+	 * whole reason the wall hang needs no movement mixin and no prediction protocol: both
+	 * sides compute the same thing from the same number.
+	 *
+	 * <p><strong>The one composition that inverts rather than degrades.</strong>
+	 * {@code ADD_MULTIPLIED_TOTAL} sums its fractions and multiplies once, so the -1.0
+	 * here lands on exactly zero — but a second multiplied-total modifier on GRAVITY
+	 * would push the sum below -1 and give <em>negative</em> gravity, i.e. a player
+	 * falling upwards. Nothing in vanilla 26.2 does that (Slow Falling is a clamp inside
+	 * {@code getEffectiveGravity}, not a modifier). If something ever does, the answer is
+	 * the {@code onClimbable} route, not a second modifier fighting this one.
+	 */
+	private static final Identifier WALL_HANG_GRAVITY_ID = GrandCraft.id("wall_hang_gravity");
+
+	/**
+	 * Ceiling on {@link #groundedTicks}, which only ever has to answer "has it been long
+	 * enough yet". Standing still for an hour must not overflow it into a negative.
+	 */
+	private static final int GROUNDED_TICKS_CAP = 1200;
 
 	private final StaggerTracker stagger = new StaggerTracker();
 
@@ -262,6 +292,10 @@ public final class CombatController {
 			clearStaggerModifiers(entity);
 			remove(entity, Attributes.MOVEMENT_SPEED, GUARD_SPEED_ID);
 			clearEmpowerment(entity);
+
+			// Not optional. A stuck gravity modifier is permanent flight on a live
+			// entity, which is the worst thing anything in this class can leak.
+			clearWallHook(entity);
 			return;
 		}
 
@@ -274,12 +308,23 @@ public final class CombatController {
 		syncStatEffects(entity);
 		this.stagger.tick(profile.stagger().resetTicks());
 
+		// Before the stamina block too, and for a related reason: tickWallHook is what
+		// ends a grip on landing, and the hang must not be charged for a tick it did not
+		// finish hanging through.
+		tickGroundContact(entity);
+		tickWallHook(entity);
+
 		// Skipped entirely for an actor without stamina. Every stamina gate short
 		// circuits on the same usesStamina() check, so its pool is never read either.
 		if (profile.usesStamina()) {
 			this.stamina.tick(profile.stamina(), this.staminaScaling.regenMultiplier());
 			drainSprint(entity, profile);
 			drainGuard(entity, profile);
+
+			// Beside the other continuous drains and before the sync, so the packet
+			// describes a pool the drain has already been taken out of and an exhaustion
+			// the grip has already been dropped for.
+			drainWallHang(entity, profile);
 			syncStamina(entity, profile);
 		}
 
@@ -486,8 +531,7 @@ public final class CombatController {
 			return false;
 		}
 
-		if ((this.state != CombatState.NEUTRAL && this.state != CombatState.GUARDING)
-				|| this.staggerTicks > 0) {
+		if (!canActFreely()) {
 			return false;
 		}
 
@@ -771,6 +815,299 @@ public final class CombatController {
 		if (this.empowerTicks > 0 && --this.empowerTicks <= 0) {
 			clearEmpowerment(entity);
 		}
+	}
+
+	// ----------------------------------------------------------- air mobility
+
+	/**
+	 * Air-dash charges in hand — the Outlaw's Acrobat, today.
+	 *
+	 * <p>Refilled by ground contact <em>and</em> by catching a wall, which is what makes
+	 * a dash-hook-dash chain possible at all.
+	 *
+	 * <p><strong>This counter alone would permit unlimited flight.</strong> Every hook
+	 * hands the charge back, so nothing here bounds the chain — {@link #wallHooksLeft}
+	 * is the only thing that does. The two counters look redundant and are not, and the
+	 * day one of them is "simplified" away the failure is total flight.
+	 */
+	private int airDashCharges;
+
+	/**
+	 * Wall grips left before the actor has to settle on the ground again.
+	 *
+	 * <p>Refilled only by {@link #groundedTicks} reaching the configured dwell — not by
+	 * a mere touch, unlike the dash charge. That asymmetry is the design: a landing
+	 * gives the dash straight back so a landing player is never left without their move,
+	 * but the hooks are what a traversal spends and they cost a moment of standing.
+	 */
+	private int wallHooksLeft;
+
+	/** Consecutive ticks on the ground. Zeroed the instant the actor leaves it. */
+	private int groundedTicks;
+
+	/**
+	 * The face of the wall being gripped, pointing from the actor at it, or null.
+	 *
+	 * <p><strong>This is the hooked flag.</strong> There is deliberately no separate
+	 * boolean beside it, because two representations of one fact can disagree and this
+	 * one gates gravity.
+	 */
+	private Direction wallFace;
+
+	/** Stamina a hanging tick costs, as granted. Zero when nothing is hanging. */
+	private float wallHangDrainPerTick;
+
+	/** Ticks left before another grip may form. */
+	private int wallHookCooldown;
+
+	/** What to stamp on {@link #wallHookCooldown} at the next release, as granted. */
+	private int wallHookReleaseCooldown;
+
+	/**
+	 * Grips a wall: stops the actor dead, cancels its gravity and starts the hold.
+	 *
+	 * <p>Deliberately mechanical, the same split {@link #grantEmpowerment} draws. Which
+	 * walls count, how many grips an actor gets, what one costs and who is allowed one
+	 * are all {@code skill/Acrobat}'s; the controller never learns what an Outlaw is.
+	 *
+	 * <p><strong>Stopping the actor is not a one-off, and this method cannot do it alone.</strong>
+	 * Cancelling gravity only stops downward speed <em>growing</em>, and a player's
+	 * position is client-authoritative, so the server can neither see nor correct a
+	 * client that is still falling. {@link #tickWallHook} re-asserts a zero velocity
+	 * every tick for as long as the grip lasts; the note there records both of the
+	 * cheaper attempts that failed and why, because they are the obvious ones.
+	 *
+	 * <p>The actor is therefore pinned completely — no drift along the wall, and no
+	 * pushing off it. The exits are the deliberate ones: dash off, be hit, run the pool
+	 * dry, land, or have the wall taken away.
+	 */
+	public void grantWallHook(LivingEntity entity, Direction face,
+			float drainPerTick, int releaseCooldownTicks) {
+		this.wallFace = face;
+		this.wallHangDrainPerTick = Math.max(drainPerTick, 0.0F);
+		this.wallHookReleaseCooldown = Math.max(releaseCooldownTicks, 0);
+
+		entity.setDeltaMovement(Vec3.ZERO);
+		entity.hurtMarked = true;
+
+		scale(entity, Attributes.GRAVITY, WALL_HANG_GRAVITY_ID, -1.0);
+		entity.resetFallDistance();
+	}
+
+	public boolean isWallHooked() {
+		return this.wallFace != null;
+	}
+
+	public Direction wallHookFace() {
+		return this.wallFace;
+	}
+
+	public int wallHookCooldown() {
+		return this.wallHookCooldown;
+	}
+
+	/**
+	 * Lets go, however the grip ended. Safe and cheap to call when nothing is hooked,
+	 * which matters — {@code Acrobat.tick} calls it unconditionally on every player who
+	 * is not an Outlaw, because that is the only route that catches a reclass mid-hang.
+	 */
+	public void clearWallHook(LivingEntity entity) {
+		if (this.wallFace != null) {
+			this.wallHookCooldown = this.wallHookReleaseCooldown;
+		}
+
+		this.wallFace = null;
+		this.wallHangDrainPerTick = 0.0F;
+		remove(entity, Attributes.GRAVITY, WALL_HANG_GRAVITY_ID);
+	}
+
+	/**
+	 * The grip's non-stamina bookkeeping: the cooldown, and the ends that need no world
+	 * query. Whether the wall is still there is {@code Acrobat}'s to ask.
+	 *
+	 * <p>The cooldown counts down whether or not anything is hanging, or a grip released
+	 * on the last tick before landing would keep its cooldown forever.
+	 */
+	private void tickWallHook(LivingEntity entity) {
+		if (this.wallHookCooldown > 0) {
+			this.wallHookCooldown--;
+		}
+
+		if (this.wallFace == null) {
+			return;
+		}
+
+		// Water is in here rather than left to the wall check because a waterfall down a
+		// cliff face satisfies every other condition: the wall is real, the actor is off
+		// the ground, and the grip would hold indefinitely for the price of the drain.
+		if (entity.onGround() || entity.isDeadOrDying() || entity.isInWater()) {
+			clearWallHook(entity);
+			return;
+		}
+
+		// Every hooked tick, not once at the grip: the landing after a hang must be
+		// harmless however long the hang was, and this is one field write.
+		entity.resetFallDistance();
+
+		// Pinned outright, unconditionally, every tick — and the two cheaper versions of
+		// this that came first were both wrong, so neither is worth trying again.
+		//
+		// Cancelling gravity only stops downward speed GROWING. The speed the actor
+		// arrived with survives, and vanilla sheds vertical motion at just 0.98 a tick
+		// (0.5 b/t is still 0.18 five seconds later), so the first cut read in game as a
+		// slow decelerating slide rather than a hang.
+		//
+		// The second cut zeroed it again whenever the velocity was non-zero, which
+		// almost never fired: a PLAYER'S POSITION IS CLIENT-AUTHORITATIVE, so the
+		// server's deltaMovement holds whatever was last written to it — zero — while
+		// the client is still falling. Any correction conditional on the server noticing
+		// movement is dead code. The server cannot see this problem; it can only assert
+		// against it.
+		//
+		// Hence: state asserted, not corrected. Twenty small motion packets a second per
+		// hanging actor is a real cost and the right one to pay, because it is the only
+		// version that does not depend on whose idea of the velocity is correct.
+		//
+		// The horizontal is zeroed too, which costs the sideways shuffle along a wall.
+		// That was never asked for, and a grip that holds beats one that can be slid
+		// along. It also keeps the actor exactly where the wall re-check expects, so the
+		// grip cannot quietly drift out of its own tolerance.
+		entity.setDeltaMovement(Vec3.ZERO);
+		entity.hurtMarked = true;
+	}
+
+	/**
+	 * Charges for the hold, and drops the actor once the pool is spent.
+	 *
+	 * <p>Continuous like {@link #drainGuard}, and with the same consequence: every
+	 * draining tick pushes the regen delay back, so <strong>nothing recovers while
+	 * hanging</strong>. A wall hang is a fixed budget rather than a rate contest, which
+	 * is what stops it being a resting position.
+	 */
+	private void drainWallHang(LivingEntity entity, CombatProfile profile) {
+		if (this.wallFace == null || this.wallHangDrainPerTick <= 0.0F) {
+			return;
+		}
+
+		this.stamina.drain(profile.stamina(), this.staminaScaling.cost(this.wallHangDrainPerTick));
+
+		if (this.stamina.exhausted()) {
+			clearWallHook(entity);
+		}
+	}
+
+	/** Counts continuous ground contact, for whatever needs an actor to have settled. */
+	private void tickGroundContact(LivingEntity entity) {
+		if (!entity.onGround()) {
+			this.groundedTicks = 0;
+		} else if (this.groundedTicks < GROUNDED_TICKS_CAP) {
+			this.groundedTicks++;
+		}
+	}
+
+	public int groundedTicks() {
+		return this.groundedTicks;
+	}
+
+	public int airDashCharges() {
+		return this.airDashCharges;
+	}
+
+	public void setAirDashCharges(int charges) {
+		this.airDashCharges = Math.max(charges, 0);
+	}
+
+	public int wallHooksLeft() {
+		return this.wallHooksLeft;
+	}
+
+	public void setWallHooksLeft(int hooks) {
+		this.wallHooksLeft = Math.max(hooks, 0);
+	}
+
+	/**
+	 * Throws the actor along a dash, horizontally and upward at once.
+	 *
+	 * <p>Separate from {@link #launch} rather than a parameter on it, because the one
+	 * thing that differs is the one thing that matters: a dodge preserves the actor's
+	 * vertical motion and a dash <strong>replaces</strong> it. Flattening before
+	 * normalising is copied from there and is needed for the same reason — the fallback
+	 * direction is a look angle, which can be steeply up or down.
+	 *
+	 * <p>Setting the vertical rather than adding it is what keeps a chain of dashes from
+	 * becoming flight, and is also what lets a dash cancel a fall. The price is that
+	 * dashing while already rising cuts the climb short; that is correct and is the sort
+	 * of thing that gets reported as a bug, so it is written down in
+	 * {@code SkillSettings.acrobatDashLiftPerTick}.
+	 */
+	public static void airDash(LivingEntity entity, Vec3 direction, double speed, double lift) {
+		double lengthSqr = direction.x * direction.x + direction.z * direction.z;
+
+		if (speed <= 0.0 || !(lengthSqr > 0.0) || !Double.isFinite(lengthSqr)) {
+			return;
+		}
+
+		double scale = speed / Math.sqrt(lengthSqr);
+
+		entity.setDeltaMovement(direction.x * scale, lift, direction.z * scale);
+		entity.hurtMarked = true;
+		entity.resetFallDistance();
+	}
+
+	/**
+	 * Pays a discrete cost on a skill's behalf.
+	 *
+	 * <p>The generic form of {@link #spendJump} and {@code spendDodgeCost}: those name
+	 * the setting they read, which is right for a verb the controller owns and wrong for
+	 * an ability whose numbers live in {@code SkillSettings}. The pool is private, so
+	 * this is the only way a skill can reach it.
+	 *
+	 * @return false when it could not be afforded, in which case nothing was deducted
+	 *         and the caller must suppress the action entirely
+	 */
+	public boolean spendSkillCost(CombatProfile profile, float rawCost) {
+		// Tested before scaling, like spendJump: a configured zero means free, and no
+		// multiplier should be able to resurrect a cost out of it.
+		if (!profile.usesStamina() || rawCost <= 0.0F) {
+			return true;
+		}
+
+		boolean paid = this.stamina.spend(profile.stamina(), this.staminaScaling.cost(rawCost));
+		reportStaminaSoon();
+		return paid;
+	}
+
+	/**
+	 * Takes a penalty that lands whether or not it can be afforded.
+	 *
+	 * <p>{@code drain} rather than {@code spend} for the reason {@code absorbBlockedHit}
+	 * gives: the event has already happened, and a penalty that refused itself because
+	 * the pool was low would reward being low.
+	 */
+	public void drainSkillCost(CombatProfile profile, float rawCost) {
+		if (!profile.usesStamina() || rawCost <= 0.0F) {
+			return;
+		}
+
+		this.stamina.drain(profile.stamina(), this.staminaScaling.cost(rawCost));
+		reportStaminaSoon();
+	}
+
+	/**
+	 * Whether the actor is free to start something — neither committed to a phase nor
+	 * staggered.
+	 *
+	 * <p>Extracted from {@link #canStartDodge}, which still calls it, so the dodge and
+	 * every later verb answer the question from one definition instead of two copies
+	 * that can drift.
+	 */
+	public boolean canActFreely() {
+		return (this.state == CombatState.NEUTRAL || this.state == CombatState.GUARDING)
+				&& this.staggerTicks == 0;
+	}
+
+	public boolean staminaExhausted() {
+		return this.stamina.exhausted();
 	}
 
 	/**

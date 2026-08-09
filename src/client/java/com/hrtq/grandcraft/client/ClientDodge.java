@@ -22,9 +22,6 @@ import net.minecraft.world.phys.Vec2;
  * correct first, and worth revisiting if this is ever played at a real ping.
  */
 public final class ClientDodge {
-	/** Vanilla's own literal, used everywhere it converts a yaw. */
-	private static final float DEGREES_TO_RADIANS = 0.017453292F;
-
 	private ClientDodge() {
 	}
 
@@ -79,7 +76,7 @@ public final class ClientDodge {
 	 * into it would be the opposite of what was asked for.
 	 */
 	private static Vec2 travelDirection(LocalPlayer player) {
-		Vec2 move = player.input.getMoveVector();
+		Vec2 move = ClientMoveInput.moveVector(player);
 		float forward = move.y;
 		float strafe = move.x;
 
@@ -87,13 +84,8 @@ public final class ClientDodge {
 			forward = -1.0F;
 		}
 
-		// Exactly Entity.getInputVector's transform, rather than a hand-derived one:
-		// the strafe axis points left, which is easy to get backwards, and matching
-		// vanilla means a dodge goes precisely where holding that key would walk.
-		float yaw = player.getYRot() * DEGREES_TO_RADIANS;
-		float sin = (float) Math.sin(yaw);
-		float cos = (float) Math.cos(yaw);
-
-		return new Vec2(strafe * cos - forward * sin, forward * cos + strafe * sin);
+		// The transform lives in ClientMoveInput so the air-dash reaches the same one.
+		// The backstep above stays here: it is this verb's answer, not a shared default.
+		return ClientMoveInput.toWorld(player, forward, strafe);
 	}
 }

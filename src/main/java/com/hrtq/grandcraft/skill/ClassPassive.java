@@ -10,10 +10,10 @@ import net.minecraft.network.chat.Component;
  * of the four slots, has no keybind and cannot be unequipped — that is what makes it
  * the root rather than a first node.
  *
- * <h2>One constant, and three classes with none</h2>
- * Only Warrior's is designed. {@link #forRoot} answers <strong>null</strong> for the
- * other three, which is what "inert until designed" means concretely: their root still
- * draws, is still never gated, and still does nothing.
+ * <h2>Two constants, and two classes with none</h2>
+ * Warrior's and Outlaw's are designed. {@link #forRoot} answers <strong>null</strong>
+ * for Sorcerer and Cleric, which is what "inert until designed" means concretely: their
+ * root still draws, is still never gated, and still does nothing.
  *
  * <p>Same bargain {@code Spell} strikes — an enum while the list is short, so a second
  * passive is a constant and an arm of one switch rather than a rewrite. A registry
@@ -34,7 +34,16 @@ public enum ClassPassive {
 	 * <p>See {@link CombatMaster} for the rules; this constant is only its identity and
 	 * its text.
 	 */
-	COMBAT_MASTER(PlayerClass.WARRIOR);
+	COMBAT_MASTER(PlayerClass.WARRIOR),
+
+	/**
+	 * Outlaw. A second push in mid-air, and walls that can be caught and kicked off
+	 * again — twice, until the ground is stood on long enough to reset them.
+	 *
+	 * <p>See {@link Acrobat} for the rules; this constant is only its identity and its
+	 * text.
+	 */
+	ACROBAT(PlayerClass.OUTLAW);
 
 	private final PlayerClass playerClass;
 
