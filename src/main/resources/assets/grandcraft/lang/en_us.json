@@ -22,7 +22,7 @@
   "skill.grandcraft.warrior.root": "Combat Master",
   "skill.grandcraft.warrior.root.description": "Blocking well opens the way in. Absorb a blow without your guard breaking and you move quicker for five seconds, and your next blow lands far harder — including against a raised guard, which it drains all the faster. Connecting spends it, so pick the swing.",
   "skill.grandcraft.outlaw.root": "Acrobat",
-  "skill.grandcraft.outlaw.root.description": "The ground is a suggestion. Jump again in mid-air to throw yourself forward and up; reach a wall two blocks tall and you catch it, hanging there and getting the dash back. Jump off and you go where you are looking. Two walls before you have to stand still for a moment to earn them again. Hanging costs stamina and nothing recovers while you hang, a hit knocks you off and takes a chunk with it, and anything you swing from a wall lands for a quarter less.",
+  "skill.grandcraft.outlaw.root.description": "The Outlaw is a keen acrobat — able to jump again in mid-air and throw themself onward, to catch a wall two blocks tall and hang from it, and to kick off it wherever they are looking. Two walls before the ground is owed a moment; hanging drains stamina and blunts the swing.",
   "screen.grandcraft.hud.combat_master": "%s  %s",
   "screen.grandcraft.sheet.skill_lines": "Skill-lines",
   "screen.grandcraft.sheet.skill_root": "%s — Root",

@@ -37,14 +37,19 @@ import net.minecraft.client.model.HumanoidModel;
  * says {@code ATTACK_ACTIVE} and {@code CombatController} cancels the attack when a stagger
  * lands in startup — this file draws the wind-up and decides nothing.
  *
- * <h2>Two rigs ship at once — 2026-08-06</h2>
+ * <h2>One rig, as of 2026-08-09 — the delivery is complete</h2>
  *
- * <p>The sword was re-authored on the <strong>Classic rig</strong>
- * ({@code assets/weapons-wind-up/}), which is vanilla's own skeleton bone for bone — so it
- * reads {@link HumanoidClipPose.ClipRig#VANILLA_MATCHED} while the other three, still on the
- * animator's old spine rig, stay {@code SPINE_CHAIN_MIRRORED_ARMS}. That is the whole reason
- * the convention travels per clip. <strong>When the remaining three are re-authored they
- * each change one field here and the mirrored arm retires unjudged.</strong>
+ * <p>All four clips are now authored on the <strong>Classic rig</strong>
+ * ({@code assets/weapons-wind-up/}), which is vanilla's own skeleton bone for bone, and all
+ * four therefore read {@link HumanoidClipPose.ClipRig#VANILLA_MATCHED}. They came in one at
+ * a time — sword 2026-08-06, greatsword 2026-08-07, dagger and staff 2026-08-09 — which is
+ * why the convention travels per clip at all, and it is worth keeping that way: the field
+ * costs nothing and the next delivery may well arrive on something else again.
+ *
+ * <p><strong>{@code SPINE_CHAIN_MIRRORED_ARMS} now has no attack clip left using it</strong>,
+ * and its conjugation retired unjudged rather than being answered — which was the plan.
+ * Re-authoring settled in three deliveries what two sessions of arguing from signs did not.
+ * The enum constant stays: the dodge clips are a separate question on the same old rig.
  *
  * <p>The sword clip did not arrive as a Bedrock export — <strong>it was converted out of the
  * {@code .bbmodel} keyframes by hand</strong>, because two animations in that file share the
@@ -77,14 +82,16 @@ public final class AttackAnimation {
 	 *
 	 * @param clip the name the animator gave it in Blockbench, used verbatim so a
 	 *             re-export drops in with nothing to rename
-	 * @param from seconds into the clip where playback <em>enters</em>. The sword and
-	 *             dagger are authored from the model's limp rest pose — arms hanging at
-	 *             the sides — and a player mid-fight is never in it: the swing visibly
-	 *             collapsed to "standing at ease" before winding up, which is what
+	 * @param from seconds into the clip where playback <em>enters</em>. It exists because
+	 *             the first delivery was authored from the model's limp rest pose — arms
+	 *             hanging at the sides — and a player mid-fight is never in it: the swing
+	 *             visibly collapsed to "standing at ease" before winding up, which is what
 	 *             <em>"the animation is starting from the player resting position"</em>
 	 *             (user, 2026-08-05) reported. Entering where the raise has already
 	 *             left rest, with {@link #WIND_IN} carrying the gap from the player's
-	 *             live stance, means the rest-like head of the clip is never shown.
+	 *             live stance, means the rest-like head of the clip is never shown. On the
+	 *             Classic rig every clip may enter at its own head, so this is now only a
+	 *             guard against a future delivery repeating that mistake.
 	 * @param preparedAt seconds into the clip of the fully-prepared pose — the frame
 	 *                   the wind-up tops out on and holds until the strike
 	 * @param strikeEnd seconds into the clip where the fast segment — the animator's
@@ -96,9 +103,10 @@ public final class AttackAnimation {
 	 *                  end does the returning instead.
 	 * @param rig which rig this clip was authored on — see
 	 *            {@link HumanoidClipPose.ClipRig}. <strong>Per clip, because the rig
-	 *            changed under us</strong>: the sword was re-delivered 2026-08-06 and the
-	 *            greatsword 2026-08-07, both on the vanilla-matched Classic rig; the
-	 *            dagger and staff are still on the old spine rig and are still owed.
+	 *            changed under us</strong>, one delivery at a time: sword 2026-08-06,
+	 *            greatsword 2026-08-07, dagger and staff 2026-08-09. All four are on the
+	 *            vanilla-matched Classic rig now, and the field stays per clip anyway —
+	 *            it costs nothing and the next delivery is not promised to be.
 	 */
 	private record WindUp(String clip, float from, float preparedAt, float strikeEnd,
 			HumanoidClipPose.ClipRig rig) {
@@ -110,53 +118,57 @@ public final class AttackAnimation {
 	 * thing to check when a re-export makes the wind-up go still. Same trap
 	 * {@code DodgeAnimation} records having been caught by once already.
 	 *
-	 * <h2>How each cutoff was chosen — and that it is a stand-in</h2>
+	 * <h2>How each number was read off its clip</h2>
 	 *
-	 * <p>The user's preferred shape is a delivery that <em>ends</em> on its prepared pose;
-	 * these cutoffs are the sanctioned temporary alternative — an explicit end time per
-	 * clip, centralised here, sampled up to and never past. Each is the last authored
-	 * keyframe before the clip's fast segment, read off the {@code right arm}'s keyframe
-	 * times — the channel that defines all four motions — <em>not</em> off the largest
-	 * rotation:
+	 * <p><strong>Nothing here is guessed at any more.</strong> All four clips are authored
+	 * in the shape that was asked for — raise, a real hold on the charged pose, then a fast
+	 * segment — so {@code preparedAt} is where the hold ends and {@code strikeEnd} where the
+	 * segment finishes travelling, both read off the {@code right arm}'s keyframe times, the
+	 * channel that defines all four motions:
 	 *
 	 * <pre>
-	 * dagger      chamber to 0.0833, held to 0.2917  → cut at 0.2917
-	 * sword       raise to 0.3333, held to 0.5       → cut at 0.5
-	 * greatsword  raise to 0.25, held to 0.91667     → cut at 0.91667
-	 * staff       settle to 0.2083, held to 0.7083   → cut at 0.7083
+	 * dagger      chamber to 0.20833, held to 0.41667, stabs by 0.45833
+	 * sword       raise to 0.33333,   held to 0.5,     lands  by 0.58333
+	 * greatsword  raise to 0.25,      held to 0.91667, lands  by 1.0
+	 * staff       raise to 0.375,     held to 0.75,    falls  by 1.0
 	 * </pre>
 	 *
-	 * <p><strong>The sword and the greatsword no longer need a stand-in.</strong> Both are
-	 * authored in the shape that was asked for — raise, a real hold on the charged pose,
-	 * then a 0.083s strike — so their numbers are read off structure rather than guessed
-	 * at: {@code preparedAt} is where the hold ends and {@code strikeEnd} where the
-	 * downswing lands. Only their tails are still unplayed. The greatsword's hold is
-	 * 13 ticks of the clip's 27.5, which is why it survives being played in ten.
+	 * <p>Where a clip holds its prepared pose the number is the <em>end</em> of the hold:
+	 * the pose is identical across it, and taking the longer span keeps the approach at the
+	 * animator's proportions when startup stretches it. Only the tails past
+	 * {@code strikeEnd} go unplayed.
 	 *
-	 * <p>Where a clip holds its prepared pose, the cutoff is the <em>end</em> of the hold:
-	 * the pose is identical across it, and taking the longer span keeps the approach at
-	 * the animator's proportions when startup stretches it.
+	 * <p><strong>The staff is the one exception and it is worth knowing about.</strong> It
+	 * has no dedicated fast segment: it goes hold → back to rest, and that return — the
+	 * right arm falling 135° to zero — is the only downward motion in the clip, so it is
+	 * what the active phase plays. It therefore ends on zero rotation, which on a
+	 * vanilla-matched rig <em>is</em> roughly the player's own stance, so recovery fades out
+	 * of a pose that is already nearly vanilla. That is benign, but it means the staff is
+	 * the clip that gains least from a real {@code hit_staff} delivery arriving, and the one
+	 * whose strike is a reading rather than a drawing.
 	 *
 	 * <p>These are seconds of the authored clip. Retuning a category's startup length does
 	 * not need them changed; a re-export does.
 	 */
 	/**
-	 * Entry points ({@code from}): where each clip's arm has visibly left rest. The
-	 * staff authors its t=0 <em>in</em> a ready grip rather than at rest, so it enters at
-	 * 0; the dagger's chamber arrives in two frames and has no rest-like head worth
-	 * skipping. <strong>The sword and greatsword no longer need one either</strong> — the
-	 * old sword delivery was authored from a limp rest the player is never in and had to
-	 * be entered at 0.25s; both Classic-rig clips leave rest on their first key, which on
-	 * the vanilla-matched rig <em>is</em> the player's own stance.
+	 * Entry points ({@code from}): where each clip's arm has visibly left rest.
+	 *
+	 * <p><strong>Nothing needs skipping any more.</strong> The old sword delivery was
+	 * authored from a limp rest the player is never in and had to be entered at 0.25s;
+	 * every Classic-rig clip leaves rest on its first key, and rest on the vanilla-matched
+	 * rig <em>is</em> the player's own stance, so entering at the head of the clip shows
+	 * nothing wrong. The staff's 0.04167 is not an exception to that — it is simply where
+	 * the animator put the clip's first keyframe, and entering before it would hold the
+	 * clamp for a frame.
 	 */
-	private static final WindUp DAGGER = new WindUp("wind_up_dagger", 0.0F, 0.2917F, 0.375F,
-			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
+	private static final WindUp DAGGER = new WindUp("wind_up_dagger", 0.0F, 0.41667F, 0.45833F,
+			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
 	private static final WindUp SWORD = new WindUp("wind_up_sword_front", 0.0F, 0.5F, 0.5833F,
 			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
 	private static final WindUp GREATSWORD = new WindUp("wind_up_greatsword", 0.0F, 0.91667F, 1.0F,
 			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
-	private static final WindUp STAFF = new WindUp("wind_up_staff", 0.0F, 0.7083F, 1.0F,
-			HumanoidClipPose.ClipRig.SPINE_CHAIN_MIRRORED_ARMS);
+	private static final WindUp STAFF = new WindUp("wind_up_staff", 0.04167F, 0.75F, 1.0F,
+			HumanoidClipPose.ClipRig.VANILLA_MATCHED);
 
 	/**
 	 * Fraction of startup by which the prepared pose is reached; the rest of the phase

@@ -68,9 +68,10 @@ public enum WeaponCategory implements StringRepresentable {
 	 * Reach and commitment. Slow to recover from and expensive to swing, but it
 	 * outranges what it is fighting.
 	 *
-	 * <p><strong>The only category that modifies a global: +5 on the wind-up</strong>
-	 * (2026-08-07), which doubles the player's 5 into a 10 tick telegraph. It is the
-	 * first modifier the seam was built for, and it was the animation that demanded it:
+	 * <p><strong>+5 on the wind-up</strong> (2026-08-07), which doubles the player's 5 into
+	 * a 10 tick telegraph. It is the first modifier the seam was built for, and the larger
+	 * of the two that exist ({@link #ARCANE} took +3 on the same grounds), and it was the
+	 * animation that demanded it:
 	 * the greatsword clip's wind-up is 18 ticks of authored motion, and played in 5 the
 	 * held pose the whole telegraph consists of lasted under four. Ten puts it at the
 	 * same 1.8x compression the confirmed sword plays at.
@@ -94,8 +95,20 @@ public enum WeaponCategory implements StringRepresentable {
 	/**
 	 * The caster's implement. Poor in melee, and not a guard implement — which is
 	 * what leaves the right button free to mean "cast".
+	 *
+	 * <p><strong>+3 on the wind-up</strong> (2026-08-09), for {@link #HEAVY}'s reason
+	 * exactly and no other: the staff clip delivered that day raises over 15 ticks, and
+	 * played in the global 5 the held pose the whole telegraph consists of lasts two.
+	 * Eight ticks is ~1.9x compression, the band both confirmed clips play in. It is a
+	 * smaller number than HEAVY's because the staff's raise is shorter than the
+	 * greatsword's, not because a caster is meant to commit less — this is an animation
+	 * figure, and the melee weight of a staff was never the thing being tuned.
+	 *
+	 * <p>Unlike HEAVY's, this modifier has <em>not</em> been judged by eye yet. The
+	 * arithmetic that produced it is the same arithmetic that produced HEAVY's, which
+	 * was confirmed on sight; that is the whole of the evidence for it.
 	 */
-	ARCANE("arcane", 0, 3, 0, 10, new StatWeights(0, 20, 0, 80),
+	ARCANE("arcane", 3, 3, 0, 10, new StatWeights(0, 20, 0, 80),
 			// Knockback is deliberately zero: a gust that shoved was too good at
 			// creating distance for free, on an attack that costs nothing to hold.
 			// The mechanism is kept rather than deleted so a heavier spell can use it.

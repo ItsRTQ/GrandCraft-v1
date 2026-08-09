@@ -63,6 +63,17 @@ public final class BedrockClip {
 		EASE_IN_OUT_CUBIC,
 
 		/**
+		 * The two the 2026-08-09 dagger and staff arrived on: {@code easeOutSine} is every
+		 * keyframe of the dagger, {@code easeOutCubic} the staff's hold and its return.
+		 *
+		 * <p>Both decelerate — fast out of the previous key, settling into this one — which
+		 * is what an arm arriving at a charged pose does. They are listed apart from the
+		 * ease-ins above only because that is the order they were needed in.
+		 */
+		EASE_OUT_SINE,
+		EASE_OUT_CUBIC,
+
+		/**
 		 * The one easing here that leaves its own lane: it dips <em>below</em> zero
 		 * early, so the segment first travels a little away from its destination before
 		 * turning round and arriving fast.
@@ -97,6 +108,12 @@ public final class BedrockClip {
 				case EASE_IN_QUAD -> t * t;
 				case EASE_IN_CUBIC -> t * t * t;
 				case EASE_OUT_QUAD -> t * (2.0F - t);
+				case EASE_OUT_SINE -> (float) Math.sin(t * Math.PI / 2.0);
+				case EASE_OUT_CUBIC -> {
+					float left = 1.0F - t;
+
+					yield 1.0F - left * left * left;
+				}
 				case EASE_IN_OUT_CUBIC -> t < 0.5F
 						? 4.0F * t * t * t
 						: 1.0F - (float) Math.pow(-2.0 * t + 2.0, 3) / 2.0F;

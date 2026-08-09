@@ -212,8 +212,9 @@ public final class BedrockClipLoader {
 	 * against clips that do not exist — <strong>add the case when a clip turns up using
 	 * it</strong>, which is exactly how this method came to exist at all, and how
 	 * {@code easeInBack} joined it when the greatsword arrived keying its downswing with
-	 * one. <strong>Check a new delivery's easings against this switch</strong>: an
-	 * unlisted one is silent, and "the swing looks flat" is the only symptom.
+	 * one, and {@code easeOutSine} / {@code easeOutCubic} when the dagger and staff did.
+	 * <strong>Check a new delivery's easings against this switch</strong>: an unlisted one
+	 * is silent, and "the swing looks flat" is the only symptom.
 	 */
 	private static BedrockClip.Interpolation interpolation(JsonElement element) {
 		if (!element.isJsonObject()) {
@@ -236,6 +237,8 @@ public final class BedrockClipLoader {
 			case "easeInQuad" -> BedrockClip.Interpolation.EASE_IN_QUAD;
 			case "easeInCubic" -> BedrockClip.Interpolation.EASE_IN_CUBIC;
 			case "easeOutQuad" -> BedrockClip.Interpolation.EASE_OUT_QUAD;
+			case "easeOutSine" -> BedrockClip.Interpolation.EASE_OUT_SINE;
+			case "easeOutCubic" -> BedrockClip.Interpolation.EASE_OUT_CUBIC;
 			case "easeInOutCubic" -> BedrockClip.Interpolation.EASE_IN_OUT_CUBIC;
 			case "easeInBack" -> BedrockClip.Interpolation.EASE_IN_BACK;
 			default -> BedrockClip.Interpolation.LINEAR;
