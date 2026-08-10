@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.client.mixin;
 
+import com.hrtq.grandcraft.client.ClientDowned;
 import com.hrtq.grandcraft.client.ClientStamina;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.Util;
@@ -10,7 +11,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Stops the local player predicting a jump they cannot pay for.
+ * Stops the local player predicting a jump they cannot pay for, or one they have no
+ * business making at all because they are lying on the floor.
  *
  * <p>This is the half of the jump cost that actually refuses. The server sees a
  * player's jump only after the client has already moved and reported it, so its own
@@ -33,6 +35,14 @@ public class ClientJumpMixin {
 		LivingEntity self = (LivingEntity) (Object) this;
 
 		if (!self.level().isClientSide() || self != Minecraft.getInstance().player) {
+			return;
+		}
+
+		// A downed player is prone, and prone things do not hop. There is nothing to
+		// gate server-side — the jump is already over by the time it hears about it —
+		// so this is the only place the refusal can happen at all.
+		if (ClientDowned.isDowned()) {
+			info.cancel();
 			return;
 		}
 

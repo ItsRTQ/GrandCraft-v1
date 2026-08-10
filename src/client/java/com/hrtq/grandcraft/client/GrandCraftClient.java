@@ -3,6 +3,7 @@ package com.hrtq.grandcraft.client;
 import com.hrtq.grandcraft.client.animation.GrandCraftAnimations;
 import com.hrtq.grandcraft.client.hud.AbilityBarElement;
 import com.hrtq.grandcraft.client.hud.ArmourBarElement;
+import com.hrtq.grandcraft.client.hud.DownedOverlayElement;
 import com.hrtq.grandcraft.client.hud.HealthBarElement;
 import com.hrtq.grandcraft.client.hud.HudBars;
 import com.hrtq.grandcraft.client.hud.ManaBarElement;
@@ -161,6 +162,12 @@ public class GrandCraftClient implements ClientModInitializer {
 		HudElementRegistry.attachElementAfter(
 				AbilityBarElement.ID, RadialMenuElement.ID, new RadialMenuElement());
 
+		// Last in the chain, so the bleed-out clock draws over everything rather than
+		// under the wheel. It is the only thing on screen that matters while it is up,
+		// and it is on screen for at most a minute of a whole session.
+		HudElementRegistry.attachElementAfter(
+				RadialMenuElement.ID, DownedOverlayElement.ID, new DownedOverlayElement());
+
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.level == null) {
 				// Between worlds: drop the tracking so entity ids from the old one
@@ -175,6 +182,8 @@ public class GrandCraftClient implements ClientModInitializer {
 				ClientCombatMaster.clear();
 				ClientAcrobat.clear();
 				ClientGuard.clear();
+				ClientDowned.clear();
+				ClientGiveUp.clear();
 				RadialMenu.clear();
 				ClientGameSettings.set(GameSettings.DEFAULT);
 				ClientStatSettings.set(StatSettings.DEFAULT);

@@ -37,6 +37,17 @@ public final class GrandCraftAnimations {
 	 */
 	public static final Identifier PLAYER_ATTACK = GrandCraft.id("animations/player_attack.json");
 
+	/**
+	 * The player lying on the floor bleeding out — one clip, {@code character_down},
+	 * delivered 2026-08-09.
+	 *
+	 * <p>Its own file rather than a fifth entry in the attack one, because it is not an
+	 * attack and the attack file is named for what it holds. It is also the first clip
+	 * whose {@code root} bone carries keyframes, which no other file's does — see
+	 * {@code DownedStep}, which is the only thing that reads them.
+	 */
+	public static final Identifier PLAYER_DOWNED = GrandCraft.id("animations/player_downed.json");
+
 	private static Map<String, BedrockClip> clips = Map.of();
 
 	private GrandCraftAnimations() {
@@ -78,6 +89,7 @@ public final class GrandCraftAnimations {
 
 		read(manager, PLAYER_DODGE, loaded);
 		read(manager, PLAYER_ATTACK, loaded);
+		read(manager, PLAYER_DOWNED, loaded);
 
 		clips = Map.copyOf(loaded);
 	}

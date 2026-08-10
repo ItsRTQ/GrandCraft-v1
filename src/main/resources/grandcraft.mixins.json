@@ -3,9 +3,13 @@
 	"package": "com.hrtq.grandcraft.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
+		"EntityIdAccessor",
 		"ExampleMixin",
+		"ExperienceOrbPickupMixin",
 		"InventorySelectionMixin",
+		"ItemEntityPickupMixin",
 		"LivingEntityBlockingMixin",
+		"LivingEntityDownedHitboxMixin",
 		"LivingEntityHitboxAccessor",
 		"LivingEntityJumpMixin",
 		"LivingEntityMixin",

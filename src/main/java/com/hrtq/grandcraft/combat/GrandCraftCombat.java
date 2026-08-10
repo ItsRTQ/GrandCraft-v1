@@ -12,8 +12,13 @@ import com.hrtq.grandcraft.skill.SkillMilestones;
 import com.hrtq.grandcraft.skill.SkillObjective;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
+import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
@@ -247,6 +252,18 @@ public final class GrandCraftCombat {
 			boolean unavoidable = source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)
 					|| source.isCreativePlayer();
 
+			// A downed actor has no health left to lose — it is sitting at one, and the
+			// next scratch would kill it and make the clock meaningless. The hit is
+			// refused and paid for out of the bleed-out instead, which is what makes a
+			// mob standing over a downed ally something an ally has to answer.
+			//
+			// Checked before the dodge, because being down outranks everything: a roll
+			// cannot be in flight while prone, but reading in that order says so.
+			if (controller.isDowned() && !unavoidable) {
+				Downed.onDamageWhileDowned(entity, controller, source, amount);
+				return false;
+			}
+
 			if (controller.isDodgeInvulnerable()) {
 				return unavoidable;
 			}
@@ -292,10 +309,51 @@ public final class GrandCraftCombat {
 			return false;
 		});
 
+		// A death that becomes a state instead. Everything about who this applies to and
+		// what it costs is Downed's; this is only the seam.
+		ServerLivingEntityEvents.ALLOW_DEATH.register(
+				(entity, source, damageTaken) -> Downed.allowDeath(entity, source));
+
+		// Logging out while prone is the one free escape from the state — the controller
+		// is transient, so a relog would stand the player up with the clock forgotten.
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+				Downed.onDisconnect(handler.getPlayer()));
+
 		registerMissPenalty();
 		registerDodge();
 		registerGuard();
 		registerAirDash();
+		registerDownedVetoes();
+	}
+
+	/**
+	 * The four things a downed player must not be able to do that the state machine
+	 * does not already refuse for free.
+	 *
+	 * <p>Attacking needs nothing here: {@code canStartAttack} refuses any state that is
+	 * not NEUTRAL, and so do the dodge, the guard and the Outlaw's dash through
+	 * {@code canActFreely}. That inheritance is the whole reason being down is a
+	 * {@link CombatState} rather than a flag — these four are what is left over, and
+	 * they are all vanilla interactions that never asked the combat system anything.
+	 *
+	 * <p>Fabric callbacks rather than mixins because all four are cancellable already.
+	 * Item and experience pickup is the exception and needs one — see
+	 * {@code ItemEntityPickupMixin}.
+	 */
+	private static void registerDownedVetoes() {
+		UseBlockCallback.EVENT.register((player, level, hand, hitResult) ->
+				Downed.isDowned(player) ? InteractionResult.FAIL : InteractionResult.PASS);
+
+		UseItemCallback.EVENT.register((player, level, hand) ->
+				Downed.isDowned(player) ? InteractionResult.FAIL : InteractionResult.PASS);
+
+		UseEntityCallback.EVENT.register((player, level, hand, entity, hitResult) ->
+				Downed.isDowned(player) ? InteractionResult.FAIL : InteractionResult.PASS);
+
+		// Mining, which is a held attack on a block rather than a use. Without it a
+		// downed player can still dig their way out of whatever they went down in.
+		AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) ->
+				Downed.isDowned(player) ? InteractionResult.FAIL : InteractionResult.PASS);
 	}
 
 	/**

@@ -1,5 +1,6 @@
 package com.hrtq.grandcraft.client.mixin;
 
+import com.hrtq.grandcraft.client.ClientDowned;
 import com.hrtq.grandcraft.client.ClientStamina;
 import net.minecraft.client.player.LocalPlayer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -26,7 +27,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public class LocalPlayerSprintMixin {
 	@Inject(method = "canStartSprinting", at = @At("HEAD"), cancellable = true)
 	private void grandcraft$sprintNeedsStamina(CallbackInfoReturnable<Boolean> info) {
-		if (ClientStamina.hasData() && ClientStamina.exhausted()) {
+		// Sprinting at 7% of walking pace would be a stutter rather than a run, and the
+		// attribute has already taken the speed away — this stops the client asking for
+		// it every tick and arguing with the server about the answer.
+		if (ClientDowned.isDowned() || (ClientStamina.hasData() && ClientStamina.exhausted())) {
 			info.setReturnValue(false);
 		}
 	}

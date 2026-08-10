@@ -55,6 +55,24 @@ public final class GrandCraftKeyMappings {
 			CATEGORY));
 
 	/**
+	 * The way out of the downed state under your own steam, held rather than pressed.
+	 *
+	 * <p>Held because of what it does: a single tap on a key next to the movement
+	 * cluster would kill players who meant to do something else. The hold length is the
+	 * server's — {@code /grandcraft config combat} — and so is every other rule about
+	 * it; this only reports the key.
+	 *
+	 * <p>{@code G} because it is free. It drops an item in vanilla, which the wheel has
+	 * already taken over as the way items leave the inventory, and holding a key that
+	 * does nothing the rest of the time costs nothing to bind here.
+	 */
+	public static final KeyMapping GIVE_UP = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+			"key.grandcraft.give_up",
+			InputConstants.Type.KEYSYM,
+			GLFW.GLFW_KEY_G,
+			CATEGORY));
+
+	/**
 	 * The four ability keys, {@code 1} through {@code 4}. Slot 3 — key {@code 4} — is
 	 * the ultimate.
 	 *
@@ -169,6 +187,20 @@ public final class GrandCraftKeyMappings {
 			while (client.options.keyJump.consumeClick()) {
 				// drained
 			}
+
+			// {@link #GIVE_UP} shares G with vanilla's drop, and 26.2 delivers the press
+			// to both mappings — so without this, deciding to die also throws your sword
+			// on the floor first. Only while down: the rest of the time dropping is
+			// nobody's business but the player's.
+			//
+			// The server refuses the rest of what a downed player might do through
+			// GrandCraftCombat's vetoes; this one is here because it is not an
+			// interaction at all, it is a keybind that happens to collide.
+			if (ClientDowned.isDowned()) {
+				while (client.options.keyDrop.consumeClick()) {
+					// drained
+				}
+			}
 		});
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -195,6 +227,11 @@ public final class GrandCraftKeyMappings {
 			}
 
 			sendAbilityPresses(client);
+
+			// After the others, so a tick that also dodged has already reported it. The
+			// two can never both apply — a downed player cannot dodge — but the order
+			// says which one is in charge when they disagree.
+			ClientGiveUp.tick(client);
 		});
 	}
 }

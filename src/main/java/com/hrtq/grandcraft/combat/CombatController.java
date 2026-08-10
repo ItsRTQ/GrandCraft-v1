@@ -113,6 +113,41 @@ public final class CombatController {
 	 */
 	private static final Identifier WALL_HANG_GRAVITY_ID = GrandCraft.id("wall_hang_gravity");
 
+	private static final Identifier DOWNED_SPEED_ID = GrandCraft.id("downed_speed");
+
+	/**
+	 * How long a {@code DOWNED} phase lease runs before it renews itself.
+	 *
+	 * <p>The same device {@link CombatConstants#GUARD_LEASE_TICKS} is, for the same
+	 * reason: the phase machinery is built on durations and this state has none. It is
+	 * <em>not</em> the bleed-out clock — that is {@link #bleedOutTicks}, and it is the
+	 * only thing that decides when a downed actor dies.
+	 *
+	 * <p>A second is short enough that a client which somehow missed the packet is not
+	 * left lying down for long, and long enough that renewing costs one packet a second
+	 * to each viewer.
+	 */
+	private static final int DOWNED_LEASE_TICKS = 20;
+
+	/**
+	 * How often the owner's client is told its own bleed-out figure, in ticks, when
+	 * nothing else about the state has changed.
+	 *
+	 * <p>Half a second of drift on a sixty-second clock is invisible, and the client
+	 * counts the seconds down itself in between.
+	 */
+	private static final int DOWNED_SYNC_TICKS = 10;
+
+	/**
+	 * How long a hold survives without being re-asserted, in ticks.
+	 *
+	 * <p>Must comfortably exceed the client's keepalive interval
+	 * ({@link CombatConstants#GUARD_KEEPALIVE_TICKS}) or a hold would lapse between two
+	 * perfectly ordinary messages. Twice it, so one dropped packet costs nothing and two
+	 * in a row end the hold.
+	 */
+	private static final int HOLD_LEASE_TICKS = CombatConstants.GUARD_KEEPALIVE_TICKS * 2;
+
 	/**
 	 * Ceiling on {@link #groundedTicks}, which only ever has to answer "has it been long
 	 * enough yet". Standing still for an hour must not overflow it into a negative.
@@ -296,6 +331,11 @@ public final class CombatController {
 			// Not optional. A stuck gravity modifier is permanent flight on a live
 			// entity, which is the worst thing anything in this class can leak.
 			clearWallHook(entity);
+
+			// And a stuck downed modifier is a player at a fourteenth of their speed
+			// with no way back — the same class of leak, and the same reason it is
+			// cleared here rather than only on the paths that end the state properly.
+			clearDowned(entity);
 			return;
 		}
 
@@ -329,6 +369,11 @@ public final class CombatController {
 		}
 
 		tickMana(entity);
+
+		// Before the state timer, so the lease that renews the pose reads a clock this
+		// tick has already spent. Ending the state is Downed's, which runs after the
+		// whole controller — see LivingEntityMixin.
+		tickDowned();
 
 		// Runs whether or not the actor pays stamina: this is the dead man's switch on
 		// the hold, not a cost. Counted down before the state timer so a hold that
@@ -864,6 +909,67 @@ public final class CombatController {
 	private int wallHookReleaseCooldown;
 
 	/**
+	 * Ticks of bleed-out left, or 0 when the actor is not down.
+	 *
+	 * <p>Deliberately separate from {@link #stateTicks}, which for {@code DOWNED} is
+	 * only a renewing lease. Two clocks because they answer two questions: one says
+	 * when to re-announce the pose, this one says when the actor dies. Folding them
+	 * together would make the death time depend on how often the pose is re-sent.
+	 */
+	private int bleedOutTicks;
+
+	/** How long the clock was when the actor went down, for drawing it as a fraction. */
+	private int bleedOutTotalTicks;
+
+	/** Ticks of revive accumulated by whoever is currently working on this actor. */
+	private int reviveTicks;
+
+	/**
+	 * Ticks before an un-renewed revive claim is forgotten.
+	 *
+	 * <p>A dead man's switch, exactly like {@link #guardHoldTicks}, and it is what
+	 * makes an abandoned revive decay on its own: nothing has to notice that the ally
+	 * walked away, stopped holding the key, disconnected or died — the claim simply
+	 * stops arriving. The alternative is remembering <em>who</em> the reviver was, and
+	 * then every way of losing them needs its own hook.
+	 */
+	private int reviveLeaseTicks;
+
+	/** Ticks the actor has held its own give-up key for. */
+	private int giveUpTicks;
+
+	/** Ticks before an un-renewed give-up hold is forgotten. See {@link #reviveLeaseTicks}. */
+	private int giveUpLeaseTicks;
+
+	/**
+	 * The blow that put the actor down, kept so the death it becomes still names it.
+	 *
+	 * <p>Held for up to the whole bleed-out, which is the one thing worth knowing about
+	 * it: a {@link DamageSource} can reference the entity that dealt it, so this pins a
+	 * mob in memory for as long as someone is lying on the floor. That is a minute of
+	 * one object, against reimplementing vanilla's death message, drops, statistics and
+	 * advancements — see {@link Downed}'s note on re-running the death rather than
+	 * simulating it. Cleared with the state.
+	 */
+	private DamageSource killingBlow;
+
+	/**
+	 * Set for exactly one death: the one {@link Downed} is asking for on purpose.
+	 *
+	 * <p>Per controller rather than a static flag, because two players can bleed out on
+	 * the same tick and a shared one would let the second death through unexamined.
+	 */
+	private boolean dying;
+
+	/** Ticks before another routine downed packet may be sent. */
+	private int downedSyncDelay;
+
+	/** The three figures as the owner's client last heard them. See {@link #syncedStamina}. */
+	private boolean syncedDowned;
+	private int syncedReviveTicks = -1;
+	private int syncedGiveUpTicks = -1;
+
+	/**
 	 * Grips a wall: stops the actor dead, cancels its gravity and starts the hold.
 	 *
 	 * <p>Deliberately mechanical, the same split {@link #grantEmpowerment} draws. Which
@@ -919,6 +1025,227 @@ public final class CombatController {
 		this.wallFace = null;
 		this.wallHangDrainPerTick = 0.0F;
 		remove(entity, Attributes.GRAVITY, WALL_HANG_GRAVITY_ID);
+	}
+
+	/**
+	 * Puts the actor down: the prone phase, the clock, and the crawl.
+	 *
+	 * <p>Mechanical only, the split {@link #grantWallHook} draws. <em>Whether</em> a
+	 * death becomes this, what ends it and what it costs are all {@link Downed}'s; the
+	 * controller never learns what being downed means.
+	 *
+	 * <p>Everything in flight is dropped first. Going down out of a wind-up, a roll or
+	 * a raised guard has to leave none of it running — a stagger slow that outlived the
+	 * state it belonged to would ride along into the revive, and a guard lease would
+	 * have the actor blocking from the floor.
+	 */
+	public void beginDowned(LivingEntity entity, DownedSettings settings) {
+		this.bleedOutTicks = settings.bleedOutTicks();
+		this.bleedOutTotalTicks = settings.bleedOutTicks();
+		this.reviveTicks = 0;
+		this.reviveLeaseTicks = 0;
+		this.giveUpTicks = 0;
+		this.giveUpLeaseTicks = 0;
+
+		this.attack = null;
+		this.activeHitConsumed = false;
+		this.staggerTicks = 0;
+		clearStaggerModifiers(entity);
+		dropGuardHold();
+		clearWallHook(entity);
+
+		scale(entity, Attributes.MOVEMENT_SPEED, DOWNED_SPEED_ID,
+				settings.moveFraction() - 1.0);
+
+		// The state has to be set before this: the hitbox mixin asks whether the actor is
+		// down, and asking a tick early would rebuild the standing box.
+		enter(entity, CombatState.DOWNED, DOWNED_LEASE_TICKS);
+		entity.refreshDimensions();
+	}
+
+	/**
+	 * Stands the actor back up, however that came about — revived, or the state being
+	 * switched off underneath them.
+	 *
+	 * <p>Safe and cheap to call when nothing is down, for the reason
+	 * {@link #clearWallHook} is: {@code Downed.tick} calls it unconditionally on an
+	 * actor that has stopped being entitled to the state, and that is the only route
+	 * which catches an admin turning the feature off with someone lying on the floor.
+	 */
+	public void clearDowned(LivingEntity entity) {
+		this.bleedOutTicks = 0;
+		this.bleedOutTotalTicks = 0;
+		this.reviveTicks = 0;
+		this.reviveLeaseTicks = 0;
+		this.giveUpTicks = 0;
+		this.giveUpLeaseTicks = 0;
+		this.killingBlow = null;
+
+		remove(entity, Attributes.MOVEMENT_SPEED, DOWNED_SPEED_ID);
+
+		if (this.state == CombatState.DOWNED) {
+			returnToNeutral(entity);
+
+			// After the state is back to neutral, for the reason beginDowned gives in
+			// mirror: this rebuilds the box from whatever the actor is now, and it has to
+			// read a standing one.
+			entity.refreshDimensions();
+		}
+	}
+
+	public boolean isDowned() {
+		return this.state == CombatState.DOWNED;
+	}
+
+	public int bleedOutTicks() {
+		return this.bleedOutTicks;
+	}
+
+	public int bleedOutTotalTicks() {
+		return this.bleedOutTotalTicks;
+	}
+
+	public int reviveTicks() {
+		return this.reviveTicks;
+	}
+
+	public int giveUpTicks() {
+		return this.giveUpTicks;
+	}
+
+	/** Takes the clock down by what a hit that landed on a downed actor costs. */
+	public void spendBleedOut(DownedSettings settings, float damage) {
+		this.bleedOutTicks = settings.bleedOutAfterDamage(this.bleedOutTicks, damage);
+	}
+
+	public void rememberKillingBlow(DamageSource source) {
+		this.killingBlow = source;
+	}
+
+	public DamageSource killingBlow() {
+		return this.killingBlow;
+	}
+
+	/** Arms the one death {@link Downed} is asking for on purpose. */
+	public void markDying() {
+		this.dying = true;
+	}
+
+	/**
+	 * Reads the flag and clears it, so a single death is let through and no more.
+	 *
+	 * <p>Read-and-clear rather than a getter and a setter, because every caller wants
+	 * both and the pair could be split across a branch that returns early. A flag left
+	 * armed is the next real death going unexamined.
+	 */
+	public boolean consumeDyingFlag() {
+		boolean was = this.dying;
+		this.dying = false;
+		return was;
+	}
+
+	/**
+	 * Whether the owner's client is due an update about its own clock, marking it sent.
+	 *
+	 * <p>The bleed-out itself is deliberately <em>not</em> part of the staleness test:
+	 * it moves every single tick, so testing it would send a packet every tick and the
+	 * throttle would do nothing. The client counts that one down for itself between
+	 * packets, the bargain the phase packet already makes — the routine send is what
+	 * corrects the drift, and a hit that jumps the clock changes nothing here but
+	 * arrives within half a second anyway.
+	 *
+	 * <p>The other three are tested, because each is something the client acts on and
+	 * none of them can be extrapolated: a revive that stopped and a give-up that was
+	 * released both look exactly like the tick before until they are reported.
+	 */
+	public boolean downedSyncDue() {
+		boolean changed = this.syncedDowned != isDowned()
+				|| this.syncedReviveTicks != this.reviveTicks
+				|| this.syncedGiveUpTicks != this.giveUpTicks;
+
+		if (!changed && this.downedSyncDelay > 0) {
+			this.downedSyncDelay--;
+			return false;
+		}
+
+		this.downedSyncDelay = DOWNED_SYNC_TICKS;
+		this.syncedDowned = isDowned();
+		this.syncedReviveTicks = this.reviveTicks;
+		this.syncedGiveUpTicks = this.giveUpTicks;
+		return true;
+	}
+
+	/**
+	 * Somebody is working on this actor, renewing their claim.
+	 *
+	 * <p><strong>This does not advance anything.</strong> It renews a lease, and
+	 * {@link #tickDowned} does the counting — see the note there on why both holds are
+	 * counted in ticks rather than in packets.
+	 */
+	public void renewRevive() {
+		this.reviveLeaseTicks = HOLD_LEASE_TICKS;
+	}
+
+	/**
+	 * The actor is asking to die, or has let go.
+	 *
+	 * <p>Renews a lease like {@link #renewRevive}; the counting is
+	 * {@link #tickDowned}'s. A release is acted on at once rather than left to the
+	 * lease, because the player is present to see it: letting go has to visibly empty
+	 * the bar on the next frame, not a fifth of a second later.
+	 */
+	public void setGivingUp(boolean held) {
+		if (!held) {
+			this.giveUpLeaseTicks = 0;
+			this.giveUpTicks = 0;
+			return;
+		}
+
+		this.giveUpLeaseTicks = HOLD_LEASE_TICKS;
+	}
+
+	/**
+	 * The bleed-out clock, and the two holds running against it.
+	 *
+	 * <p><strong>Both holds are counted here, one per tick, and that is the whole
+	 * point of the leases.</strong> The first version advanced them inside the packet
+	 * receivers instead — one step per message — and the rate was then the client's
+	 * keepalive interval rather than anything configured: a 30 tick hold really took
+	 * ninety, in jerks, and the bar drawn from the counter and the death that crossed
+	 * its threshold disagreed about where they were (found in game, 2026-08-09). A
+	 * duration expressed in ticks has to be counted in ticks; a packet only says the
+	 * key is still down.
+	 *
+	 * <p>The revive decays at the same rate it builds, so an interrupted one is worth
+	 * half of itself a moment later rather than nothing at all — being knocked off an
+	 * ally for a tick should cost a tick. Giving up does not decay: it is the actor's
+	 * own decision about their own character, and letting go means it was not taken.
+	 */
+	private void tickDowned() {
+		if (this.state != CombatState.DOWNED) {
+			return;
+		}
+
+		if (this.bleedOutTicks > 0) {
+			this.bleedOutTicks--;
+		}
+
+		// Counted down first, so a lease that lapsed this tick does not also pay out
+		// this tick — the same order the guard hold is read in.
+		boolean reviving = this.reviveLeaseTicks > 0 && --this.reviveLeaseTicks >= 0;
+		boolean givingUp = this.giveUpLeaseTicks > 0 && --this.giveUpLeaseTicks >= 0;
+
+		if (reviving) {
+			this.reviveTicks++;
+		} else if (this.reviveTicks > 0) {
+			this.reviveTicks--;
+		}
+
+		if (givingUp) {
+			this.giveUpTicks++;
+		} else {
+			this.giveUpTicks = 0;
+		}
 	}
 
 	/**
@@ -1714,6 +2041,11 @@ public final class CombatController {
 			}
 			case ATTACK_RECOVERY, STAGGERED, DODGE_RECOVERY, GUARD_RECOVERY ->
 					returnToNeutral(entity);
+			// Renews itself and never leaves on its own. Being down ends by being
+			// revived, giving up, or the bleed-out clock reaching zero, and all three
+			// are Downed's — none of them is a phase running out. Standing an actor up
+			// here would put them back on their feet once a second.
+			case DOWNED -> enter(entity, CombatState.DOWNED, DOWNED_LEASE_TICKS);
 			case NEUTRAL -> {
 			}
 		}
@@ -1844,7 +2176,7 @@ public final class CombatController {
 	 * <p>The player joins this the moment it gains real attack phases, by gaining
 	 * the verb. Nothing here names an entity type.
 	 *
-	 * <p>Dodge, guard and stagger phases are the exception and are always drawn:
+	 * <p>Dodge, guard, stagger and downed phases are the exception and are always drawn:
 	 * vanilla has no roll to be in competition with, its own blocking is gone, and its
 	 * hit reaction is a red flash rather than a pose — so in none of the three is
 	 * there anything to suppress or anything that could be left half-drawn. This is
@@ -1856,7 +2188,8 @@ public final class CombatController {
 	 * into one, and a punishment nobody can see does not read as a punishment.
 	 */
 	private static boolean animatesPhases(LivingEntity entity, CombatState state) {
-		if (state.isDodge() || state.isGuard() || state == CombatState.STAGGERED) {
+		if (state.isDodge() || state.isGuard() || state == CombatState.STAGGERED
+				|| state == CombatState.DOWNED) {
 			return true;
 		}
 

@@ -3,6 +3,7 @@ package com.hrtq.grandcraft.client.mixin;
 import com.hrtq.grandcraft.client.ClientGameSettings;
 import com.hrtq.grandcraft.client.render.CombatPoseState;
 import com.hrtq.grandcraft.client.render.DodgeStep;
+import com.hrtq.grandcraft.client.render.DownedStep;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
@@ -12,7 +13,12 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Turns a dodging actor's whole body into the step.
+ * Turns a dodging actor's whole body into the step, and lays a downed one on the
+ * ground.
+ *
+ * <p>Two verbs on one hook because they need the same thing — a rotation no bone can
+ * express — and this method is where vanilla keeps every whole-body rotation it has.
+ * They are mutually exclusive by construction: an actor cannot be rolling and prone.
  *
  * <p>{@code setupRotations} is where vanilla applies every whole-body rotation it
  * has — the body yaw, the death topple, the riptide pitch — so it is the right
@@ -51,5 +57,10 @@ public abstract class LivingEntityRendererDodgeMixin {
 				poseState.grandcraft$phaseProgress(),
 				poseState.grandcraft$travelYaw(),
 				bodyRot);
+
+		// After the dodge's turn rather than before it, so that if the two ever did
+		// overlap the body would be laid down last and the roll would read as a wobble
+		// rather than the pose being drawn upright.
+		DownedStep.apply(poseStack, poseState.grandcraft$phase());
 	}
 }

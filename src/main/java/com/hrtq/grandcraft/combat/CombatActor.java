@@ -38,7 +38,7 @@ public enum CombatActor {
 	 */
 	PLAYER("player", Player.class,
 			EnumSet.of(CombatVerb.STAMINA, CombatVerb.DODGE, CombatVerb.BLOCK,
-					CombatVerb.WEAPONS, CombatVerb.PHASED_MELEE),
+					CombatVerb.WEAPONS, CombatVerb.PHASED_MELEE, CombatVerb.DOWNED),
 			new ActorSettings(
 					// THE PLAYER'S GLOBAL WIND-UP (user, 2026-08-07). One number paces
 					// every swing whatever is held, so the telegraph teaches one rhythm
@@ -96,7 +96,24 @@ public enum CombatActor {
 					// clear of where a crowding attacker sits, and still leaves a ninety
 					// degree cone behind the actor that no guard covers, which is the rule
 					// the arc exists for.
-					new BlockSettings(3, 3, 10, 250, 2, 135, 40, 60))),
+					new BlockSettings(3, 3, 10, 250, 2, 135, 40, 60),
+					// A minute on the clock, 7% of normal speed, and 20 ticks off the clock
+					// per point of damage — all three the user's figures (2026-08-09).
+					//
+					// THE 20 IS AN IDENTITY, NOT A RATE. At twenty ticks it is exactly one
+					// second per point of damage, which makes the clock a second health
+					// bar that happens to be denominated in seconds: a four damage zombie
+					// swing costs four seconds, a forty damage hit costs forty. The user's
+					// own framing — "the seconds the player has left are the health he has
+					// left". Anything other than 20 breaks that reading, so move it only
+					// on purpose.
+					//
+					// Three seconds to revive is long enough that it cannot be done in the
+					// middle of a fight without someone else holding the line, which is
+					// the whole reason the verb is worth having in a party. Getting up on
+					// 30% health keeps a revive from being a full reset: the ally who
+					// picks you up has bought you a retreat, not another life.
+					new DownedSettings(1200, 7, 20, 60, 30, 30, 30))),
 
 	/**
 	 * The GeckoLib-drawn zombie-human.
@@ -132,7 +149,10 @@ public enum CombatActor {
 					// already do.
 					new StaminaSettings(0, 0, 0, 0, 0, 0),
 					new DodgeSettings(0, 0, 0, 0),
-					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0))),
+					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0),
+					// Zeroed rather than only un-verbed, exactly as dodge and block are, so
+					// the config screen tells the truth about a mob that cannot be revived.
+					new DownedSettings(0, 0, 0, 0, 0, 0, 0))),
 
 	/**
 	 * Covers the whole zombie family — husk, drowned, zombie villager — since they
@@ -161,7 +181,8 @@ public enum CombatActor {
 					new DodgeSettings(0, 0, 0, 0),
 					// No guard either, and zeroed for the same reason: the arc is the off
 					// switch, so nothing the zombie does can ever fall inside it.
-					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0)));
+					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0),
+					new DownedSettings(0, 0, 0, 0, 0, 0, 0)));
 
 	private final String id;
 	private final Class<? extends LivingEntity> type;
@@ -223,6 +244,11 @@ public enum CombatActor {
 	/** @see CombatVerb#BLOCK */
 	public boolean usesBlock() {
 		return has(CombatVerb.BLOCK);
+	}
+
+	/** @see CombatVerb#DOWNED */
+	public boolean usesDowned() {
+		return has(CombatVerb.DOWNED);
 	}
 
 	public ActorSettings defaults() {

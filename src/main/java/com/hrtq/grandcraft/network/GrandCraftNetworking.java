@@ -3,6 +3,7 @@ package com.hrtq.grandcraft.network;
 import com.hrtq.grandcraft.GrandCraft;
 import com.hrtq.grandcraft.combat.CombatConfigFile;
 import com.hrtq.grandcraft.combat.CombatTuning;
+import com.hrtq.grandcraft.combat.Downed;
 import com.hrtq.grandcraft.combat.WeaponConfigFile;
 import com.hrtq.grandcraft.combat.WeaponTuning;
 import com.hrtq.grandcraft.config.GameConfigFile;
@@ -92,6 +93,10 @@ public final class GrandCraftNetworking {
 				.register(OpenSkillConfigPayload.TYPE, OpenSkillConfigPayload.STREAM_CODEC);
 		PayloadTypeRegistry.clientboundPlay()
 				.register(CombatMasterPayload.TYPE, CombatMasterPayload.STREAM_CODEC);
+		PayloadTypeRegistry.clientboundPlay()
+				.register(DownedPayload.TYPE, DownedPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay()
+				.register(GiveUpPayload.TYPE, GiveUpPayload.STREAM_CODEC);
 
 		registerClassSelection();
 		registerStatSpending();
@@ -104,6 +109,7 @@ public final class GrandCraftNetworking {
 		registerLevelConfig();
 		registerWeaponConfig();
 		registerSkillConfig();
+		registerGiveUp();
 
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			ServerPlayer player = handler.getPlayer();
@@ -292,6 +298,21 @@ public final class GrandCraftNetworking {
 	 * re-checked as unlocked — an ability equipped before an admin raised its gate must
 	 * stop working, not keep firing because it was equipped when the rule was looser.
 	 */
+	/**
+	 * Takes the player's own decision to stop waiting.
+	 *
+	 * <p>Thin on purpose, like the dodge and the guard: the client reports a held key
+	 * and nothing else. Whether the player is even down, how long the hold must last
+	 * and what happens at the end of it are all {@code Downed}'s.
+	 *
+	 * <p>Silently ignored when the player is not down. A key that means something in
+	 * one state and nothing in every other is not worth a refusal noise.
+	 */
+	private static void registerGiveUp() {
+		ServerPlayNetworking.registerGlobalReceiver(GiveUpPayload.TYPE, (payload, context) ->
+				Downed.setGivingUp(context.player(), payload.held()));
+	}
+
 	private static void registerSkillUse() {
 		ServerPlayNetworking.registerGlobalReceiver(UseSkillPayload.TYPE, (payload, context) -> {
 			ServerPlayer player = context.player();
@@ -299,6 +320,14 @@ public final class GrandCraftNetworking {
 			if (!payload.isValidSlot()) {
 				GrandCraft.LOGGER.warn("{} sent an out-of-range skill slot: {}",
 						player.getGameProfile().name(), payload.slot());
+				return;
+			}
+
+			// Prone players do not cast. This is the one verb the downed state does not
+			// get refused for free: an ability key is its own channel and never asks the
+			// state machine anything, unlike attacking, dodging and guarding. Silent,
+			// like every other press with nothing behind it.
+			if (Downed.isDowned(player)) {
 				return;
 			}
 

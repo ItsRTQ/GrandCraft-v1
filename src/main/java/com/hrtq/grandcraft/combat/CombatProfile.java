@@ -14,6 +14,7 @@ public record CombatProfile(
 		StaminaSettings stamina,
 		DodgeSettings dodge,
 		BlockSettings block,
+		DownedSettings downed,
 		StatRange health,
 		StatRange damage,
 		StatRange speed,
@@ -21,9 +22,9 @@ public record CombatProfile(
 
 	public CombatProfile {
 		if (actor == null || melee == null || stagger == null || stamina == null
-				|| dodge == null || block == null) {
-			throw new IllegalArgumentException(
-					"A combat profile needs an actor, melee, stagger, stamina, dodge and block profile");
+				|| dodge == null || block == null || downed == null) {
+			throw new IllegalArgumentException("A combat profile needs an actor, melee, stagger, "
+					+ "stamina, dodge, block and downed profile");
 		}
 	}
 
@@ -63,6 +64,20 @@ public record CombatProfile(
 	 * {@link WeaponCategory#UNARMED}, whose defaults are this profile's own values, so
 	 * there is nothing a config switch would need to turn off.
 	 */
+	/**
+	 * Whether this actor falls prone instead of dying, combining the compile-time
+	 * opt-in with the runtime config switch — the same two-part rule as
+	 * {@link #usesStamina()}.
+	 *
+	 * <p>Read on the death path, which is the one place in the mod where answering
+	 * wrongly cannot be recovered from: a false positive cancels a death that should
+	 * have happened, and there is no second chance to run it. Both halves are checked
+	 * there for that reason rather than either being assumed.
+	 */
+	public boolean usesDowned() {
+		return this.actor.has(CombatVerb.DOWNED) && this.downed.enabled();
+	}
+
 	public boolean usesWeapons() {
 		return this.actor.has(CombatVerb.WEAPONS);
 	}

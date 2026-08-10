@@ -74,6 +74,22 @@ public enum CombatVerb {
 	BLOCK,
 
 	/**
+	 * This actor does not die when its health reaches zero: it falls prone with a
+	 * bleed-out clock, and either an ally, its own decision, or that clock ends it.
+	 *
+	 * <p>The verb is what makes the death cancellable at all — {@code ALLOW_DEATH} is
+	 * fired for every living thing on the server, and an actor without this one falls
+	 * straight through to vanilla's death. That is deliberate for mobs: a downed zombie
+	 * that nothing in the game can revive is a corpse that has to be killed twice.
+	 *
+	 * <p>Only the player has it, and unlike {@link #DODGE} and {@link #BLOCK} that is
+	 * not merely because no mob has an AI goal for it yet. Reviving is a <em>player</em>
+	 * verb — the state exists so that a party can answer a death, and a mob with no ally
+	 * able to reach it would only ever meet the timer.
+	 */
+	DOWNED,
+
+	/**
 	 * This actor's attack is governed by what it is holding: its endlag and stamina
 	 * cost come from the held item's {@link WeaponCategory} rather than from its own
 	 * {@link ActorSettings}.

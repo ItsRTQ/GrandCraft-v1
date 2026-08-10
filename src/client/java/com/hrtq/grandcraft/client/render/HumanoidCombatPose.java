@@ -228,7 +228,11 @@ public final class HumanoidCombatPose {
 			// A dodge is a rotation of the whole body rather than a pose of its arms,
 			// so it is drawn elsewhere and this leaves the rig alone. A tuck — arms in,
 			// legs drawn up — belongs here once the roll rotation exists to tuck into.
-			case NEUTRAL, DODGE_ACTIVE, DODGE_RECOVERY -> 0.0F;
+			//
+			// DOWNED joins them for a stronger version of the same reason: it is drawn
+			// from an authored clip, absolutely, by DownedPose. A procedural posture
+			// blended underneath one would be a second answer to the same question.
+			case NEUTRAL, DODGE_ACTIVE, DODGE_RECOVERY, DOWNED -> 0.0F;
 			// Same envelope as the attack: up quickly so the stance is legible for
 			// almost the whole raise, and released slowly onto exactly zero.
 			case GUARD_RAISE -> Ease.outCubic(t);
@@ -253,8 +257,9 @@ public final class HumanoidCombatPose {
 			// Held while the blend falls away, which is what "arms drift back" is.
 			case ATTACK_RECOVERY -> SLAM;
 			case STAGGERED -> FLINCH;
-			// See blend(): the dodge phases are drawn as a body rotation, not here.
-			case NEUTRAL, DODGE_ACTIVE, DODGE_RECOVERY -> null;
+			// See blend(): the dodge phases are drawn as a body rotation, and the downed
+			// phase from a clip. Neither is this method's to answer.
+			case NEUTRAL, DODGE_ACTIVE, DODGE_RECOVERY, DOWNED -> null;
 			// The guard has no Posture: it is asymmetric and handled before this is
 			// ever reached. See applyGuard.
 			case GUARD_RAISE, GUARDING, GUARD_RECOVERY -> null;

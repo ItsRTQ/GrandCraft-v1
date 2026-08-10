@@ -6,6 +6,7 @@ import com.hrtq.grandcraft.combat.CombatActor;
 import com.hrtq.grandcraft.combat.CombatSettings;
 import com.hrtq.grandcraft.combat.CombatVerb;
 import com.hrtq.grandcraft.combat.DodgeSettings;
+import com.hrtq.grandcraft.combat.DownedSettings;
 import com.hrtq.grandcraft.combat.StaminaSettings;
 import com.hrtq.grandcraft.combat.StatRange;
 import com.hrtq.grandcraft.network.ApplyCombatConfigPayload;
@@ -59,7 +60,9 @@ public class CombatConfigScreen extends Screen {
 			"max_stamina", "regen", "regen_delay", "attack_cost", "sprint_cost", "jump_cost",
 			"dodge_invulnerable", "dodge_recovery", "dodge_speed", "dodge_cost",
 			"block_raise", "block_recovery", "block_break", "block_cost",
-			"block_hold", "block_arc", "block_slow", "block_shield");
+			"block_hold", "block_arc", "block_slow", "block_shield",
+			"downed_bleed_out", "downed_move", "downed_damage", "downed_revive",
+			"downed_reach", "downed_revive_health", "downed_give_up");
 
 	/**
 	 * Which group of settings is on screen.
@@ -72,7 +75,8 @@ public class CombatConfigScreen extends Screen {
 		COMBAT("combat"),
 		STAMINA("stamina"),
 		DODGE("dodge"),
-		BLOCK("block");
+		BLOCK("block"),
+		DOWNED("downed");
 
 		private final String id;
 
@@ -141,6 +145,13 @@ public class CombatConfigScreen extends Screen {
 	private TunableField blockArc;
 	private TunableField blockSlow;
 	private TunableField blockShield;
+	private TunableField downedBleedOut;
+	private TunableField downedMove;
+	private TunableField downedDamage;
+	private TunableField downedRevive;
+	private TunableField downedReach;
+	private TunableField downedReviveHealth;
+	private TunableField downedGiveUp;
 
 	public CombatConfigScreen(CombatSettings settings) {
 		super(Component.translatable("screen.grandcraft.config.title"));
@@ -181,6 +192,7 @@ public class CombatConfigScreen extends Screen {
 			case STAMINA -> buildStaminaGrid(actor, seed);
 			case DODGE -> buildDodgeGrid(seed);
 			case BLOCK -> buildBlockGrid(seed);
+			case DOWNED -> buildDownedGrid(seed);
 			case COMBAT -> buildCombatGrid(actor, seed);
 		});
 
@@ -381,6 +393,47 @@ public class CombatConfigScreen extends Screen {
 		return grid;
 	}
 
+	/**
+	 * The downed group: one value column, no ranges, for the same reason as the other
+	 * three verb groups — these describe how the state behaves rather than a stat
+	 * rolled per individual.
+	 *
+	 * <p>Ordered the way someone tuning it would work: how long you have, then what
+	 * moves that clock, then the two ways off it.
+	 */
+	private GridLayout buildDownedGrid(ActorSettings seed) {
+		DownedSettings downed = seed.downed();
+
+		GridLayout grid = new GridLayout().spacing(CELL_SPACING);
+		int row = 0;
+
+		this.downedBleedOut = ticks(downed.bleedOutTicks(), DownedSettings.MAX_BLEED_OUT_TICKS);
+		row = addValue(grid, row, "downed_bleed_out", false, this.downedBleedOut);
+
+		this.downedMove = unit(downed.movePercent(), DownedSettings.MAX_MOVE_PERCENT, "percent");
+		row = addValue(grid, row, "downed_move", false, this.downedMove);
+
+		this.downedDamage = unit(downed.ticksLostPerDamage(),
+				DownedSettings.MAX_TICKS_LOST_PER_DAMAGE, "ticks_per_damage");
+		row = addValue(grid, row, "downed_damage", false, this.downedDamage);
+
+		this.downedRevive = ticks(downed.reviveTicks(), DownedSettings.MAX_REVIVE_TICKS);
+		row = addValue(grid, row, "downed_revive", false, this.downedRevive);
+
+		this.downedReach = unit(downed.reviveReach(), DownedSettings.MAX_REVIVE_REACH,
+				"tenths_of_a_block");
+		row = addValue(grid, row, "downed_reach", false, this.downedReach);
+
+		this.downedReviveHealth = unit(downed.reviveHealthPercent(),
+				DownedSettings.MAX_REVIVE_HEALTH_PERCENT, "percent");
+		row = addValue(grid, row, "downed_revive_health", false, this.downedReviveHealth);
+
+		this.downedGiveUp = ticks(downed.giveUpHoldTicks(), DownedSettings.MAX_GIVE_UP_HOLD_TICKS);
+		addValue(grid, row, "downed_give_up", false, this.downedGiveUp);
+
+		return grid;
+	}
+
 	/** Whether this actor has the verb a section exists to configure. */
 	private static boolean hasSection(CombatActor actor, Section section) {
 		return switch (section) {
@@ -388,6 +441,7 @@ public class CombatConfigScreen extends Screen {
 			case STAMINA -> actor.has(CombatVerb.STAMINA);
 			case DODGE -> actor.usesDodge();
 			case BLOCK -> actor.usesBlock();
+			case DOWNED -> actor.usesDowned();
 		};
 	}
 
@@ -605,7 +659,8 @@ public class CombatConfigScreen extends Screen {
 							this.sprintCost.intValue(),
 							this.jumpCost.intValue()),
 					stored.dodge(),
-					stored.block());
+					stored.block(),
+					stored.downed());
 		}
 
 		if (this.sectionFor == Section.DODGE) {
@@ -624,7 +679,8 @@ public class CombatConfigScreen extends Screen {
 							this.dodgeRecovery.intValue(),
 							this.dodgeSpeed.intValue(),
 							this.dodgeCost.intValue()),
-					stored.block());
+					stored.block(),
+					stored.downed());
 		}
 
 		if (this.sectionFor == Section.BLOCK) {
@@ -647,7 +703,31 @@ public class CombatConfigScreen extends Screen {
 							this.blockHold.intValue(),
 							this.blockArc.intValue(),
 							this.blockSlow.intValue(),
-							this.blockShield.intValue()));
+							this.blockShield.intValue()),
+					stored.downed());
+		}
+
+		if (this.sectionFor == Section.DOWNED) {
+			return new ActorSettings(
+					stored.startupTicks(),
+					stored.activeTicks(),
+					stored.recoveryTicks(),
+					stored.staggerTicks(),
+					stored.health(),
+					stored.damage(),
+					stored.speed(),
+					stored.defence(),
+					stored.stamina(),
+					stored.dodge(),
+					stored.block(),
+					new DownedSettings(
+							this.downedBleedOut.intValue(),
+							this.downedMove.intValue(),
+							this.downedDamage.intValue(),
+							this.downedRevive.intValue(),
+							this.downedReach.intValue(),
+							this.downedReviveHealth.intValue(),
+							this.downedGiveUp.intValue()));
 		}
 
 		return new ActorSettings(
@@ -661,7 +741,8 @@ public class CombatConfigScreen extends Screen {
 				pointsBand(this.defenceMin, this.defenceMax),
 				stored.stamina(),
 				stored.dodge(),
-				stored.block());
+				stored.block(),
+				stored.downed());
 	}
 
 	/** A fixed stat has no max field, so its band collapses onto the single value. */

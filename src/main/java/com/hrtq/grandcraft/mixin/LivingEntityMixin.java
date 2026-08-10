@@ -1,6 +1,7 @@
 package com.hrtq.grandcraft.mixin;
 
 import com.hrtq.grandcraft.combat.CombatController;
+import com.hrtq.grandcraft.combat.Downed;
 import com.hrtq.grandcraft.combat.PlayerAttack;
 import com.hrtq.grandcraft.player.GrandCraftAttachments;
 import com.hrtq.grandcraft.skill.Acrobat;
@@ -44,6 +45,11 @@ public class LivingEntityMixin {
 			// what this reads is the current state rather than the previous one.
 			// Returns immediately for anything that is not a player.
 			Acrobat.tick(self, controller);
+
+			// Last, and it has to be: this is the one of the three that can end with the
+			// actor dead. Anything running after it would be reading a controller whose
+			// entity is on its way out.
+			Downed.tick(self, controller);
 		}
 	}
 }

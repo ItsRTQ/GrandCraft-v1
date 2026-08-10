@@ -15,6 +15,8 @@ import net.minecraft.network.codec.StreamCodec;
  *
  * <p>Stamina is a nested group rather than six more fields at this level, so the
  * top level stays scannable and the config screen can show it as its own section.
+ * Dodge, block and downed follow it for the same reason — four groups, four
+ * sections.
  *
  * <p>Health, damage and speed are multipliers of whatever the mob's vanilla value
  * is, so one setting means the same thing for a zombie as for anything added
@@ -32,7 +34,8 @@ public record ActorSettings(
 		StatRange defence,
 		StaminaSettings stamina,
 		DodgeSettings dodge,
-		BlockSettings block) {
+		BlockSettings block,
+		DownedSettings downed) {
 
 	/** Bounds shared by the config fields and the server-side clamp. */
 	public static final int MAX_PHASE_TICKS = 40;
@@ -100,7 +103,9 @@ public record ActorSettings(
 				DodgeSettings.codec(fallback.dodge()).optionalFieldOf("dodge", fallback.dodge())
 						.forGetter(ActorSettings::dodge),
 				BlockSettings.codec(fallback.block()).optionalFieldOf("block", fallback.block())
-						.forGetter(ActorSettings::block)
+						.forGetter(ActorSettings::block),
+				DownedSettings.codec(fallback.downed()).optionalFieldOf("downed", fallback.downed())
+						.forGetter(ActorSettings::downed)
 		).apply(instance, ActorSettings::new));
 	}
 
@@ -117,6 +122,7 @@ public record ActorSettings(
 				StaminaSettings.STREAM_CODEC.encode(buf, settings.stamina());
 				DodgeSettings.STREAM_CODEC.encode(buf, settings.dodge());
 				BlockSettings.STREAM_CODEC.encode(buf, settings.block());
+				DownedSettings.STREAM_CODEC.encode(buf, settings.downed());
 			},
 			buf -> new ActorSettings(
 					buf.readInt(), buf.readInt(), buf.readInt(), buf.readInt(),
@@ -126,7 +132,8 @@ public record ActorSettings(
 					StatRange.STREAM_CODEC.decode(buf),
 					StaminaSettings.STREAM_CODEC.decode(buf),
 					DodgeSettings.STREAM_CODEC.decode(buf),
-					BlockSettings.STREAM_CODEC.decode(buf)));
+					BlockSettings.STREAM_CODEC.decode(buf),
+					DownedSettings.STREAM_CODEC.decode(buf)));
 
 	/**
 	 * A copy with every value forced inside its bounds. Always applied to anything
@@ -147,7 +154,8 @@ public record ActorSettings(
 				this.defence.clamped(0.0, MAX_DEFENCE),
 				this.stamina.clamped(),
 				this.dodge.clamped(),
-				this.block.clamped());
+				this.block.clamped(),
+				this.downed.clamped());
 	}
 
 	private static int clamp(int value, int min, int max) {

@@ -45,7 +45,24 @@ public enum CombatState {
 	GUARDING,
 
 	/** The tail of a guard: no longer absorbing and not yet able to act. */
-	GUARD_RECOVERY;
+	GUARD_RECOVERY,
+
+	/**
+	 * Prone, bleeding out, and not dead yet. Entered instead of dying; left by being
+	 * revived, giving up, or the clock running out — {@link Downed} owns all three.
+	 *
+	 * <p><strong>Being a state rather than a flag is the whole design.</strong> Every
+	 * "you cannot do that while down" rule is inherited rather than written:
+	 * {@link CombatController#canStartAttack} already refuses anything that is not
+	 * NEUTRAL, {@link CombatController#canActFreely} already gates the dodge, the guard
+	 * and the Outlaw's dash, and {@code CombatPhasePayload} already tells every watching
+	 * client what state an actor is in, which is what draws the prone pose.
+	 *
+	 * <p>Unlike every other state here its length is not a duration. The phase clock
+	 * runs on a renewing lease, exactly as {@link #GUARDING}'s does and for the same
+	 * reason; the bleed-out clock is {@link Downed}'s and is reported on its own packet.
+	 */
+	DOWNED;
 
 	private static final CombatState[] BY_ID = values();
 

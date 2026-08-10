@@ -14,6 +14,7 @@ import com.hrtq.grandcraft.network.LevelConfigPayload;
 import com.hrtq.grandcraft.network.ManaPayload;
 import com.hrtq.grandcraft.network.OpenCombatConfigPayload;
 import com.hrtq.grandcraft.network.OpenSkillConfigPayload;
+import com.hrtq.grandcraft.network.DownedPayload;
 import com.hrtq.grandcraft.network.StaminaPayload;
 import com.hrtq.grandcraft.network.StatConfigPayload;
 import com.hrtq.grandcraft.network.WeaponConfigPayload;
@@ -60,6 +61,11 @@ public final class GrandCraftClientNetworking {
 
 		ClientPlayNetworking.registerGlobalReceiver(ManaPayload.TYPE, (payload, context) ->
 				ClientMana.accept(payload, Util.getMillis()));
+
+		// The owner's own clock. The prone pose everyone can see arrives separately, on
+		// the phase packet — see DownedPayload on why the two are split.
+		ClientPlayNetworking.registerGlobalReceiver(DownedPayload.TYPE, (payload, context) ->
+				ClientDowned.accept(payload, Util.getMillis()));
 
 		// Two messages per window and none for expiry — see CombatMasterPayload. The
 		// deadline is worked out here, once, from the length the server actually

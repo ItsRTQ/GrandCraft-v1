@@ -4,12 +4,14 @@ import com.hrtq.grandcraft.client.ClientGameSettings;
 import com.hrtq.grandcraft.client.render.AttackAnimation;
 import com.hrtq.grandcraft.client.render.CombatPoseState;
 import com.hrtq.grandcraft.client.render.DodgeAnimation;
+import com.hrtq.grandcraft.client.render.DownedPose;
 import com.hrtq.grandcraft.client.render.HumanoidCombatPose;
 import com.hrtq.grandcraft.combat.CombatState;
 import com.hrtq.grandcraft.combat.WeaponCategory;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.player.PlayerModel;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+import net.minecraft.util.Util;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -72,6 +74,16 @@ public abstract class PlayerModelMixin {
 		HumanoidModel<?> model = (HumanoidModel<?>) (Object) this;
 
 		float progress = ((CombatPoseState) state).grandcraft$phaseProgress();
+
+		// Before the dodge and the attack because it outranks both: a downed actor is
+		// not doing either, and reading it first says so. Its clip loops on the world
+		// clock rather than playing out over the phase — being down lasts a minute and
+		// the clip is a one-second struggle — so it is the one pose here that ignores
+		// the progress entirely. See DownedPose.
+		if (phase == CombatState.DOWNED) {
+			DownedPose.apply(model, phase, Util.getMillis());
+			return;
+		}
 
 		// The dodge is the one phase drawn from an authored clip rather than from a
 		// procedural posture, so it takes the whole rig — legs included — instead of

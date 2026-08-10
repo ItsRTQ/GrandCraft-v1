@@ -12,6 +12,7 @@
 		"HumanoidModelAttackPitchMixin",
 		"ItemInHandRendererMixin",
 		"ItemStackAttributeTooltipMixin",
+		"KeyboardInputMixin",
 		"LivingEntityRenderStateMixin",
 		"LivingEntityRendererDodgeMixin",
 		"LivingEntityRendererExtractMixin",

@@ -79,7 +79,7 @@ public final class CombatProfiles {
 			// never reaches it, exactly as with stamina — usesDodge() and usesBlock()
 			// each combine the two halves.
 			PROFILES.put(actor, new CombatProfile(actor, melee, StaggerProfile.from(values),
-					values.stamina(), values.dodge(), values.block(),
+					values.stamina(), values.dodge(), values.block(), values.downed(),
 					values.health(), values.damage(), values.speed(), values.defence()));
 		}
 	}
