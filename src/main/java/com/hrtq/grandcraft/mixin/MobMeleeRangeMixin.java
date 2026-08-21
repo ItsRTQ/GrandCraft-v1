@@ -31,6 +31,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * That component is the item's statement about its own reach, including a minimum
  * range that a plain inflation cannot express, so overriding it would silently
  * break spear-like weapons.
+ *
+ * <p><strong>One actor opts out, and not through any check in here.</strong>
+ * {@code CobbleGolemEntity} <em>overrides</em> {@code isWithinMeleeAttackRange}, and a
+ * subclass override is dispatched before this injection into {@code Mob}'s copy is
+ * ever reached — so the golem never sees this code at all. That is intended: its
+ * attack is a 4 block circle rather than an inflated box, and one constant on that
+ * entity drives both the reach and the ring of particles that advertises it. If a
+ * future mob's reach misbehaves, check for an override before assuming this mixin
+ * governs it.
  */
 @Mixin(Mob.class)
 public abstract class MobMeleeRangeMixin {

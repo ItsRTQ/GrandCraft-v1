@@ -10,6 +10,8 @@ import com.hrtq.grandcraft.client.hud.ManaBarElement;
 import com.hrtq.grandcraft.client.hud.RadialMenu;
 import com.hrtq.grandcraft.client.hud.RadialMenuElement;
 import com.hrtq.grandcraft.client.hud.StaminaBarElement;
+import com.hrtq.grandcraft.client.render.CobbleGolemRenderer;
+import com.hrtq.grandcraft.client.render.DemonSkeletonRenderer;
 import com.hrtq.grandcraft.client.render.LifeEssenceOrbRenderer;
 import com.hrtq.grandcraft.client.render.ZombieHumanRenderer;
 import com.hrtq.grandcraft.client.tooltip.WeaponTooltip;
@@ -54,6 +56,8 @@ public class GrandCraftClient implements ClientModInitializer {
 		// private and Fabric reaches it by mixin. The warning is expected; do not go
 		// looking for a newer API.
 		EntityRendererRegistry.register(GrandCraftEntities.ZOMBIE_HUMAN, ZombieHumanRenderer::new);
+		EntityRendererRegistry.register(GrandCraftEntities.DEMON_SKELETON, DemonSkeletonRenderer::new);
+		EntityRendererRegistry.register(GrandCraftEntities.COBBLE_GOLEM, CobbleGolemRenderer::new);
 		EntityRendererRegistry.register(GrandCraftEntities.LIFE_ESSENCE_ORB, LifeEssenceOrbRenderer::new);
 
 		// Vanilla's own item-sprite projectile renderer, which is the whole of "use the

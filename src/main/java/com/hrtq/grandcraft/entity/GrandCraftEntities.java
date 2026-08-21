@@ -40,6 +40,42 @@ public final class GrandCraftEntities {
 					.clientTrackingRange(8));
 
 	/**
+	 * The demonic skeleton.
+	 *
+	 * <p>Same box as the zombie-human because it is the same rig: 32 model units tall,
+	 * which is two blocks, so anything else would leave the hitbox disagreeing with what
+	 * is drawn.
+	 */
+	public static final EntityType<DemonSkeletonEntity> DEMON_SKELETON =
+			registerSummonable("demon_skeleton", EntityType.Builder.of(DemonSkeletonEntity::new, MobCategory.MONSTER)
+					.sized(0.6F, 1.95F)
+					.eyeHeight(1.74F)
+					.clientTrackingRange(8));
+
+	/**
+	 * The cobble golem.
+	 *
+	 * <p>The first custom mob on a rig of its own rather than the shared humanoid one,
+	 * and much the largest: 41 model units tall (2.56 blocks) with a shoulder span of
+	 * 45 (2.8), which is a squat, broad thing rather than a tall one.
+	 *
+	 * <p>The box is <strong>narrower than the artwork</strong> at 1.8, and deliberately.
+	 * A hitbox matching the shoulders would be wider than two blocks, and pathfinding
+	 * sizes its nodes off this — a golem that cannot fit down a two block corridor
+	 * would simply refuse to follow anyone into one. 1.8 is a shade under vanilla's
+	 * ravager, which is the closest thing to this shape that navigates well.
+	 *
+	 * <p>A longer tracking range than the other two: it is dormant most of the time and
+	 * two and a half blocks tall, so it wants to be drawn from further off than a mob
+	 * that only matters once it has reached you.
+	 */
+	public static final EntityType<CobbleGolemEntity> COBBLE_GOLEM =
+			registerSummonable("cobble_golem", EntityType.Builder.of(CobbleGolemEntity::new, MobCategory.MONSTER)
+					.sized(1.8F, 2.6F)
+					.eyeHeight(2.1F)
+					.clientTrackingRange(10));
+
+	/**
 	 * The dropped form of Essence Power.
 	 *
 	 * <p>Registered through {@link #register} rather than
@@ -109,5 +145,7 @@ public final class GrandCraftEntities {
 		// Attributes are registered here rather than in the static block above so the
 		// entity types exist before anything is attached to them.
 		FabricDefaultAttributeRegistry.register(ZOMBIE_HUMAN, ZombieHumanEntity.createAttributes());
+		FabricDefaultAttributeRegistry.register(DEMON_SKELETON, DemonSkeletonEntity.createAttributes());
+		FabricDefaultAttributeRegistry.register(COBBLE_GOLEM, CobbleGolemEntity.createAttributes());
 	}
 }

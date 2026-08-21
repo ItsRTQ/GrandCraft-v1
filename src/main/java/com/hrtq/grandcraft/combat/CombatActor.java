@@ -1,5 +1,7 @@
 package com.hrtq.grandcraft.combat;
 
+import com.hrtq.grandcraft.entity.CobbleGolemEntity;
+import com.hrtq.grandcraft.entity.DemonSkeletonEntity;
 import com.hrtq.grandcraft.entity.ZombieHumanEntity;
 import com.mojang.serialization.Codec;
 import java.util.EnumSet;
@@ -152,6 +154,116 @@ public enum CombatActor {
 					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0),
 					// Zeroed rather than only un-verbed, exactly as dodge and block are, so
 					// the config screen tells the truth about a mob that cannot be revived.
+					new DownedSettings(0, 0, 0, 0, 0, 0, 0))),
+
+	/**
+	 * The GeckoLib-drawn cobble golem, and the mod's first deliberately slow opponent.
+	 *
+	 * <p>Holds {@link CombatVerb#PHASED_MELEE} on the same terms as the two mobs below:
+	 * {@link CombatPhaseAnimations} can show the wind-up, so committing to one is
+	 * honest. This is the first mob whose delivery contained a <strong>separate</strong>
+	 * wind-up clip and a return-to-rest, so it is also the first with every one of
+	 * startup, active and recovery animated — see {@code CobbleGolemEntity}.
+	 *
+	 * <p><strong>Slow, huge and heavy, all three deliberately</strong> (user, 2026-08-20:
+	 * *"make the attack stronger with more radius… but make it slower"*). Twenty-four
+	 * ticks of telegraph is nearly five times a zombie's, and with fourteen of endlag
+	 * behind it the cycle is <strong>58 ticks — 2.9 seconds</strong>, against a zombie's
+	 * 0.85. Nothing else in the table is remotely this slow, and nothing else hits for
+	 * twelve in a six and a half block circle. The two are the same decision: the
+	 * opening after a golem's swing is the whole counterplay, and it has to be long
+	 * enough to be worth taking a risk for.
+	 *
+	 * <p><strong>Lesson 7 is bought off by the radius rather than by the window.</strong>
+	 * The lesson is written against an effective reach of about 1.4 blocks, where a
+	 * target walking backwards leaves the danger zone during a long wind-up. This mob
+	 * commits at <em>six and a half</em> and hits every direction at once, so escaping a
+	 * 24 tick telegraph means covering six blocks in 1.2 seconds — which a sprinting
+	 * player can just do and a walking one cannot. That is the intended shape: the slam
+	 * is escapable, but only by committing to running, and the fourteen tick window
+	 * means a half-hearted step back does not save anyone.
+	 *
+	 * <p>The hit window has a second job here that it has nowhere else: the shockwave
+	 * ring is drawn across it, so widening or narrowing it changes how many rings the
+	 * effect gets. Fourteen gives five.
+	 *
+	 * <p><strong>The startup and the wind-up clip's hold have to move together</strong> —
+	 * see {@code CobbleGolemEntity}. Raising this number alone spreads a ten tick arm
+	 * raise over the whole phase and turns the telegraph back into slow motion.
+	 *
+	 * <p><strong>{@link CombatVerb#POISE} is what makes the 24 tick wind-up survivable
+	 * for the golem</strong> (user, 2026-08-20), and it is the first entry in the table
+	 * to hold it. A telegraph this long is otherwise several free swings for anyone
+	 * standing next to it, every one of which cancels the wind-up, so the slam would
+	 * simply never happen against a player who kept attacking. The golem now commits:
+	 * hit it mid-raise and it takes the damage and swings anyway. Every other state
+	 * staggers it normally, so the endlag is still the opening.
+	 *
+	 * <p>Rolled ranges are narrower than the zombie's on health and damage and much
+	 * narrower on speed: a golem is meant to be a known quantity, and one that
+	 * occasionally rolls fast would undo the reading the long telegraph buys. Defence
+	 * is where the spread went instead — 4 to 12 armour points, well above anything
+	 * else in the table, because a pile of cobblestone that armour does nothing for is
+	 * a strange pile of cobblestone.
+	 *
+	 * <p>Dormancy is <strong>not</strong> configured here, and deliberately: the detect
+	 * range, the rise and the twenty second search are the mob's own behaviour rather
+	 * than combat tuning, and they live as named constants on
+	 * {@code CobbleGolemEntity}. Nothing on this tab can turn a golem's ambush off.
+	 */
+	COBBLE_GOLEM("cobble_golem", CobbleGolemEntity.class,
+			EnumSet.of(CombatVerb.PHASED_MELEE, CombatVerb.RANDOM_STATS, CombatVerb.POISE),
+			new ActorSettings(
+					24, 14, 20, 6,
+					new StatRange(0.9, 1.2),
+					new StatRange(0.9, 1.2),
+					new StatRange(0.95, 1.05),
+					new StatRange(4.0, 12.0),
+					// Mobs have no stamina, deliberately — a pool gives them a second,
+					// invisible way to fail. Zeroed rather than only un-verbed, here as
+					// below, so the config screen tells the truth about what this mob can
+					// and cannot do.
+					new StaminaSettings(0, 0, 0, 0, 0, 0),
+					new DodgeSettings(0, 0, 0, 0),
+					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0),
+					new DownedSettings(0, 0, 0, 0, 0, 0, 0))),
+
+	/**
+	 * The GeckoLib-drawn demonic skeleton.
+	 *
+	 * <p>Holds {@link CombatVerb#PHASED_MELEE} on the same terms as
+	 * {@link #ZOMBIE_HUMAN}: {@link CombatPhaseAnimations} can show the wind-up, so
+	 * committing to one is honest. Its telegraph is the first half of the animator's
+	 * {@code attack} clip, split out and held — see {@code DemonSkeletonEntity}.
+	 *
+	 * <p><strong>Every number here is the zombie-human's, deliberately.</strong> What
+	 * this slice proves is that the mob draws, animates and joins the combat system;
+	 * making a demonic skeleton feel unlike a zombie is the behaviour slice that follows,
+	 * and it happens on this tab rather than in this file.
+	 *
+	 * <p>It extends {@code Monster} rather than {@code Skeleton}, so no entry above or
+	 * below can claim it and the declaration order is free. A {@code Skeleton} subclass
+	 * would also have been a bow user, which never reaches the melee hook at all.
+	 */
+	DEMON_SKELETON("demon_skeleton", DemonSkeletonEntity.class,
+			EnumSet.of(CombatVerb.PHASED_MELEE, CombatVerb.RANDOM_STATS),
+			new ActorSettings(
+					// A wide window to match the long wind-up, for the reason recorded on
+					// ZOMBIE_HUMAN: a two tick window against a deliberate, readable raise
+					// means the target has always stepped out of reach by the time it
+					// opens, and the mob telegraphs, commits and whiffs forever.
+					10, 6, 10, 4,
+					new StatRange(0.8, 1.4),
+					new StatRange(0.8, 1.4),
+					new StatRange(0.9, 1.2),
+					new StatRange(0.0, 6.0),
+					// Mobs have no stamina, deliberately — a pool gives them a second,
+					// invisible way to fail. Zeroed rather than only un-verbed, here and
+					// below, so the config screen tells the truth about what this mob can
+					// and cannot do.
+					new StaminaSettings(0, 0, 0, 0, 0, 0),
+					new DodgeSettings(0, 0, 0, 0),
+					new BlockSettings(0, 0, 0, 0, 0, 0, 0, 0),
 					new DownedSettings(0, 0, 0, 0, 0, 0, 0))),
 
 	/**

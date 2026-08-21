@@ -90,6 +90,27 @@ public enum CombatVerb {
 	DOWNED,
 
 	/**
+	 * This actor cannot be flinched out of a wind-up: a hit landing during
+	 * {@code ATTACK_STARTUP} does damage and nothing else.
+	 *
+	 * <p><strong>Only the wind-up.</strong> Every other state staggers normally, so an
+	 * actor with poise is not armoured — it is <em>committed</em>. Once it has decided
+	 * to swing, the swing happens; interrupting it is no longer an option and the
+	 * answer becomes getting out of the way. That is the whole point: a slow attacker
+	 * whose telegraph can be cancelled by any chip of damage never actually attacks,
+	 * and the longer and more readable the wind-up, the more certainly true that is.
+	 * The cobble golem's is 24 ticks, which at close range is several free swings.
+	 *
+	 * <p>The hit is <strong>not registered with the stagger tracker</strong> either,
+	 * so hits absorbed this way do not eat into the actor's consecutive-hit budget and
+	 * leave it un-staggerable afterwards. Poise costs the attacker nothing and buys the
+	 * defender nothing beyond finishing the swing it started.
+	 *
+	 * <p>Read by exactly one place — {@code CombatController.applyStagger}.
+	 */
+	POISE,
+
+	/**
 	 * This actor's attack is governed by what it is holding: its endlag and stamina
 	 * cost come from the held item's {@link WeaponCategory} rather than from its own
 	 * {@link ActorSettings}.

@@ -315,6 +315,28 @@ public final class CombatController {
 		return this.state;
 	}
 
+	/**
+	 * Ticks left in the current timed phase, and how long it was when it began.
+	 *
+	 * <p>The pair is what a server-side telegraph needs, and it needs both for the
+	 * reason {@link #phaseTotalTicks} exists at all: the remainder alone cannot
+	 * distinguish a wind-up two ticks from its end from one that was only ever two
+	 * ticks long, so nothing can draw a progress fraction from it. Shaped exactly like
+	 * {@link #bleedOutTicks()} / {@link #bleedOutTotalTicks()}.
+	 *
+	 * <p>This is <strong>not</strong> {@link #attackLockoutTicks()}, which deliberately
+	 * spans the whole swing so the crosshair can fill across it. A telegraph is drawn
+	 * against one phase.
+	 */
+	public int phaseTicks() {
+		return this.stateTicks;
+	}
+
+	/** @see #phaseTicks() */
+	public int phaseTotalTicks() {
+		return this.phaseTotalTicks;
+	}
+
 	/** Advances all combat timers. Server side only, once per entity tick. */
 	public void tick(LivingEntity entity) {
 		CombatProfile profile = CombatProfiles.forEntity(entity);
@@ -1998,6 +2020,14 @@ public final class CombatController {
 			return;
 		}
 
+		// Poise: a committed wind-up cannot be flinched out of. Returning before the
+		// tracker rather than merely skipping the state change is deliberate — the hit
+		// should not spend a step of the consecutive-hit budget either, or a defender
+		// would come out of its swing already immune to the punish that follows.
+		if (this.state == CombatState.ATTACK_STARTUP && profile.actor().has(CombatVerb.POISE)) {
+			return;
+		}
+
 		int level = this.stagger.registerHit();
 
 		if (level == 0) {
@@ -2012,6 +2042,9 @@ public final class CombatController {
 		if (this.state == CombatState.NEUTRAL || this.state == CombatState.ATTACK_STARTUP
 				|| this.state == CombatState.GUARD_RAISE || this.state == CombatState.GUARDING) {
 			// Cancels a wind-up; a committed attack is left alone. See class docs.
+			// An actor with CombatVerb.POISE never reaches here mid-wind-up — it
+			// returned above — so ATTACK_STARTUP still means "interruptible" for
+			// everyone that does.
 			//
 			// A guard is knocked down for the same reason a wind-up is cancelled: the
 			// only hits that reach here while one is up are the ones it did not cover —
